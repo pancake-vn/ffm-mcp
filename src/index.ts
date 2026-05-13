@@ -61,7 +61,7 @@ function resolveToken(input: { access_token?: string }): string {
 }
 
 const server = new Server(
-  { name: "sea-fulfillment-orders-mcp", version: "0.1.0" },
+  { name: "ffm-mcp", version: "0.1.0" },
   { capabilities: { tools: {} } },
 );
 
@@ -211,10 +211,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Lưu ý: KHÔNG log ra stdout — stdout là kênh MCP. Dùng stderr.
-  process.stderr.write("[sea-fulfillment-orders-mcp] ready on stdio\n");
+  process.stderr.write("[ffm-mcp] ready on stdio\n");
 }
 
 main().catch((err) => {
-  process.stderr.write(`[sea-fulfillment-orders-mcp] fatal: ${err?.stack || err}\n`);
+  process.stderr.write(`[ffm-mcp] fatal: ${err?.stack || err}\n`);
   process.exit(1);
 });
