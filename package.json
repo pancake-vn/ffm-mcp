@@ -1,0 +1,29 @@
+{
+  "name": "sea-fulfillment-orders-mcp",
+  "version": "0.1.0",
+  "description": "MCP server expose API orders/get_orders của sea-fulfillment, normalize dữ liệu theo các field mà OrderExportExcel.js đang dùng.",
+  "type": "module",
+  "bin": {
+    "sea-fulfillment-orders-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc -w"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

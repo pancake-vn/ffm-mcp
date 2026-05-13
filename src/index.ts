@@ -1,0 +1,220 @@
+#!/usr/bin/env node
+// MCP server cho sea-fulfillment orders.
+//
+// Transport: stdio.
+// Tools:
+//   - get_orders      : query một page get_orders, trả raw response BE.
+//   - get_orders_normalized : query (1 page hoặc all pages) + normalize theo
+//     OrderExportExcel.formatData. Tham số `paginate=true` để loop hết.
+//
+// access_token có thể truyền theo tham số tool, hoặc fallback env
+// SEA_FULFILLMENT_ACCESS_TOKEN. country_code mặc định "63" (PH).
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+import { callGetOrders, fetchAllOrders } from "./api.js";
+import { normalizeOrders } from "./normalize.js";
+
+const DEFAULT_COUNTRY_CODE = process.env.SEA_FULFILLMENT_COUNTRY_CODE || "63";
+const DEFAULT_HOST = process.env.SEA_FULFILLMENT_HOST || "https://fulfillment.pancake.vn";
+
+const TokenArg = z.string().min(1).optional();
+
+const GetOrdersInput = z.object({
+  access_token: TokenArg,
+  country_code: z.string().optional(),
+  host: z.string().url().optional(),
+  filter: z.record(z.unknown()).optional(),
+  page: z.number().int().positive().optional(),
+  page_size: z.number().int().positive().max(2000).optional(),
+  load_full: z.boolean().optional(),
+  is_summarize: z.boolean().optional(),
+  extra: z.record(z.unknown()).optional(),
+});
+
+const GetOrdersNormalizedInput = z.object({
+  access_token: TokenArg,
+  country_code: z.string().optional(),
+  host: z.string().url().optional(),
+  filter: z.record(z.unknown()).optional(),
+  page: z.number().int().positive().optional(),
+  page_size: z.number().int().positive().max(2000).optional(),
+  paginate: z.boolean().optional(), // true → fetch all pages tới max_pages
+  max_pages: z.number().int().positive().max(100).optional(),
+  extra: z.record(z.unknown()).optional(),
+});
+
+function resolveToken(input: { access_token?: string }): string {
+  const token = input.access_token || process.env.SEA_FULFILLMENT_ACCESS_TOKEN;
+  if (!token) {
+    throw new Error(
+      "Missing access_token. Truyền tham số `access_token` hoặc set env SEA_FULFILLMENT_ACCESS_TOKEN.",
+    );
+  }
+  return token;
+}
+
+const server = new Server(
+  { name: "sea-fulfillment-orders-mcp", version: "0.1.0" },
+  { capabilities: { tools: {} } },
+);
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [
+    {
+      name: "get_orders",
+      description:
+        "Gọi POST /api/orders/get_orders (sea-fulfillment) và trả raw response. " +
+        "Dùng khi cần response gốc BE (counter, pagination meta). " +
+        "Access token lấy từ tham số hoặc env SEA_FULFILLMENT_ACCESS_TOKEN.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          access_token: { type: "string", description: "Pancake access_token. Override env." },
+          country_code: { type: "string", description: "Phone-code SUPPORTED_COUNTRIES, default 63 (PH)." },
+          host: { type: "string", description: "Override base host, vd https://fulfillment.pancake.vn." },
+          filter: { type: "object", description: "Filter body, vd { order_ids: [..] }, { statuses: [..] }." },
+          page: { type: "number" },
+          page_size: { type: "number" },
+          load_full: { type: "boolean", description: "Nếu true → BE trả full order schema (cần cho normalize)." },
+          is_summarize: { type: "boolean" },
+          extra: { type: "object", description: "Param phụ merge vào body request." },
+        },
+      },
+    },
+    {
+      name: "get_orders_normalized",
+      description:
+        "Gọi get_orders với load_full=true rồi normalize từng order theo OrderExportExcel.formatData " +
+        "(sea-fulfillment-web). Trả mảng order phẳng với các field: full_address, weight, " +
+        "total_quantity, tracking_number, partner_name, product_name, remarks, customer_name, " +
+        "status (text), shop, send_to_partner_at, shipped_at, completed_at, " +
+        "courier_*/customer_* reconciliation, tags, … Bật paginate=true để loop hết.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          access_token: { type: "string" },
+          country_code: { type: "string" },
+          host: { type: "string" },
+          filter: { type: "object" },
+          page: { type: "number" },
+          page_size: { type: "number" },
+          paginate: { type: "boolean", description: "true → fetch toàn bộ pages (cap by max_pages)." },
+          max_pages: { type: "number", description: "Trần số page khi paginate=true, default 20." },
+          extra: { type: "object" },
+        },
+      },
+    },
+  ],
+}));
+
+server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const { name, arguments: rawArgs } = req.params;
+  try {
+    switch (name) {
+      case "get_orders": {
+        const args = GetOrdersInput.parse(rawArgs ?? {});
+        const token = resolveToken(args);
+        const country = args.country_code || DEFAULT_COUNTRY_CODE;
+        const params: Record<string, unknown> = {
+          ...(args.extra ?? {}),
+          filter: args.filter ?? {},
+        };
+        if (args.page != null) params.page = args.page;
+        if (args.page_size != null) params.page_size = args.page_size;
+        if (args.load_full != null) params.load_full = args.load_full;
+        if (args.is_summarize != null) params.is_summarize = args.is_summarize;
+
+        const data = await callGetOrders({
+          accessToken: token,
+          countryCode: country,
+          host: args.host || DEFAULT_HOST,
+          params,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      }
+
+      case "get_orders_normalized": {
+        const args = GetOrdersNormalizedInput.parse(rawArgs ?? {});
+        const token = resolveToken(args);
+        const country = args.country_code || DEFAULT_COUNTRY_CODE;
+
+        let orders: any[];
+        let pagination: Record<string, unknown> | null = null;
+
+        if (args.paginate) {
+          orders = await fetchAllOrders({
+            accessToken: token,
+            countryCode: country,
+            host: args.host || DEFAULT_HOST,
+            filter: args.filter,
+            pageSize: args.page_size,
+            maxPages: args.max_pages,
+            extraParams: args.extra,
+          });
+        } else {
+          const params: Record<string, unknown> = {
+            ...(args.extra ?? {}),
+            filter: args.filter ?? {},
+            page: args.page ?? 1,
+            page_size: args.page_size ?? 50,
+            load_full: true,
+          };
+          const data = await callGetOrders({
+            accessToken: token,
+            countryCode: country,
+            host: args.host || DEFAULT_HOST,
+            params,
+          });
+          orders = Array.isArray(data?.data) ? (data.data as any[]) : [];
+          pagination = {
+            page: data?.page,
+            page_size: data?.page_size,
+            total: data?.total,
+            total_pages: data?.total_pages,
+          };
+        }
+
+        const normalized = normalizeOrders(orders, { countryCode: country });
+        const payload = {
+          country_code: country,
+          count: normalized.length,
+          pagination,
+          orders: normalized,
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+        };
+      }
+
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `Error: ${message}` }],
+    };
+  }
+});
+
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  // Lưu ý: KHÔNG log ra stdout — stdout là kênh MCP. Dùng stderr.
+  process.stderr.write("[sea-fulfillment-orders-mcp] ready on stdio\n");
+}
+
+main().catch((err) => {
+  process.stderr.write(`[sea-fulfillment-orders-mcp] fatal: ${err?.stack || err}\n`);
+  process.exit(1);
+});
