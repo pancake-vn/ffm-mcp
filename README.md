@@ -49,8 +49,54 @@ dùng query `?access_token=…`.
 | Biến / tham số | Mặc định | Note |
 |---|---|---|
 | `SEA_FULFILLMENT_ACCESS_TOKEN` | _(bắt buộc)_ | Có thể override bằng tham số `access_token` mỗi tool call. |
-| `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, thuộc supported countries (`63 / 66 / 60 / 62 / 65`). |
-| `SEA_FULFILLMENT_HOST` | `https://fulfillment.pancake.vn` | Đổi sang `https://<host>:4004` cho local BE. |
+| `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem bảng dưới. |
+| `SEA_FULFILLMENT_HOST` | `https://fulfillment.pancake.vn` | Base URL của BE, xem bảng host dưới. |
+
+### 2.1. `country_code`
+
+Phone-code (string) — KHÔNG dùng ISO 2 chữ. Đồng bộ
+[sea-fulfillment lib/app/constant.ex:93-99](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L93-L99)
+(`supported_countries` — có currency map):
+
+| `country_code` | Country | Short | Currency |
+|---|---|---|---|
+| `"63"` | Philippines | PH | PHP |
+| `"66"` | Thailand | TH | THB |
+| `"60"` | Malaysia | MY | MYR |
+| `"62"` | Indonesia | ID | IDR |
+| `"65"` | Singapore | SG | SGD |
+
+Ngoài ra BE còn accept (theo
+[`supported_country_codes`](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L70)):
+
+| `country_code` | Country | Note |
+|---|---|---|
+| `"856"` | Laos | BE accept nhưng MCP không có currency map → tiền fallback chia `/100` (có thể sai với LAK). |
+
+> KHÔNG dùng `"VN"`, `"84"`, `"VND"` — Vietnam KHÔNG nằm trong supported
+> countries (CLAUDE.md §7).
+
+### 2.2. `host`
+
+Base URL gồm scheme. Đồng bộ
+[sea-fulfillment lib/app/constant.ex:72-83](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L72-L83)
+(`supported_hosts`):
+
+| Host (`SEA_FULFILLMENT_HOST`) | `app_id` | Prefix | Note |
+|---|---|---|---|
+| `https://fulfillment.pancake.vn` | 99 | PFFM | Production Pancake FFM (mặc định) |
+| `https://g-solution.vn` | 1 | GIP | G-Solution |
+| `https://afgwarehouse.net` | 2 | AFG | AFG Warehouse |
+| `https://app.mspeedyexpress.com` | 3 | MSX | M-Speedy Express |
+| `https://lynexpress.co` | 4 | LYN | Lyn Express |
+| `https://buber.pancake.vn` | 5 | BUBER | Buber |
+| `https://admin.ifgfulfillmentglobal.com` | 6 | IFG | IFG Fulfillment Global |
+| `https://bigate.co` | 9 | BIG | Bigate |
+| `https://localhost:4004` | 0 | FFM | Local BE dev (mix phx.server) |
+
+> `app_id` được BE auto-detect từ hostname trong request — bạn không cần
+> truyền `app_id` thủ công. Đảm bảo `access_token` được issue đúng cho host
+> đó (token cross-host sẽ trả 401/403).
 
 > **Bảo mật:** `access_token` cho phép thao tác đầy đủ user. Lưu trong env
 > hoặc config client — đừng commit thẳng.

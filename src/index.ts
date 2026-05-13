@@ -77,8 +77,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           access_token: { type: "string", description: "Pancake access_token. Override env." },
-          country_code: { type: "string", description: "Phone-code SUPPORTED_COUNTRIES, default 63 (PH)." },
-          host: { type: "string", description: "Override base host, vd https://fulfillment.pancake.vn." },
+          country_code: {
+            type: "string",
+            description:
+              "Phone-code quốc gia. Supported (có currency map): " +
+              "63=Philippines(PHP), 66=Thailand(THB), 60=Malaysia(MYR), " +
+              "62=Indonesia(IDR), 65=Singapore(SGD). BE còn accept 856=Laos " +
+              "nhưng MCP không có currency map → tiền fallback /100. Default 63.",
+          },
+          host: {
+            type: "string",
+            description:
+              "Base URL (gồm scheme). Default https://fulfillment.pancake.vn. " +
+              "Các host BE supported (lib/app/constant.ex:72): " +
+              "fulfillment.pancake.vn (app_id=99,PFFM), g-solution.vn (1,GIP), " +
+              "afgwarehouse.net (2,AFG), app.mspeedyexpress.com (3,MSX), " +
+              "lynexpress.co (4,LYN), buber.pancake.vn (5,BUBER), " +
+              "admin.ifgfulfillmentglobal.com (6,IFG), bigate.co (9,BIG). " +
+              "Local dev: https://localhost:4004.",
+          },
           filter: { type: "object", description: "Filter body, vd { order_ids: [..] }, { statuses: [..] }." },
           page: { type: "number" },
           page_size: { type: "number" },

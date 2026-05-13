@@ -16,6 +16,7 @@ export const INT_CURRENCY_LIST: ReadonlyArray<string> = [
   "CLP",
 ];
 
+// sea-fulfillment lib/app/constant.ex:93-99 — supported_countries (có currency map).
 export const SUPPORTED_COUNTRIES: ReadonlyArray<{
   countryCode: string;
   short: string;
@@ -27,6 +28,31 @@ export const SUPPORTED_COUNTRIES: ReadonlyArray<{
   { countryCode: "60", short: "MY", name: "Malaysia", currency: "MYR" },
   { countryCode: "62", short: "ID", name: "Indonesia", currency: "IDR" },
   { countryCode: "65", short: "SG", name: "Singapore", currency: "SGD" },
+];
+
+// sea-fulfillment lib/app/constant.ex:70 — supported_country_codes (BE accept,
+// rộng hơn supported_countries). Laos "856" BE accept nhưng không có currency
+// trong SUPPORTED_COUNTRIES → MCP fallback /100.
+export const EXTRA_ACCEPTED_COUNTRY_CODES: ReadonlyArray<string> = ["856"];
+
+// sea-fulfillment lib/app/constant.ex:72-83 — supported_hosts.
+// MCP `host` param có thể truyền full URL (`https://<hostname>` hoặc
+// `https://<hostname>:4004` cho local).
+export const SUPPORTED_HOSTS: ReadonlyArray<{
+  hostname: string;
+  appId: number;
+  prefix: string;
+}> = [
+  { hostname: "fulfillment.pancake.vn", appId: 99, prefix: "PFFM" },
+  { hostname: "localhost", appId: 0, prefix: "FFM" },
+  { hostname: "ffm_running_app", appId: 0, prefix: "FFM" },
+  { hostname: "g-solution.vn", appId: 1, prefix: "GIP" },
+  { hostname: "afgwarehouse.net", appId: 2, prefix: "AFG" },
+  { hostname: "app.mspeedyexpress.com", appId: 3, prefix: "MSX" },
+  { hostname: "lynexpress.co", appId: 4, prefix: "LYN" },
+  { hostname: "buber.pancake.vn", appId: 5, prefix: "BUBER" },
+  { hostname: "admin.ifgfulfillmentglobal.com", appId: 6, prefix: "IFG" },
+  { hostname: "bigate.co", appId: 9, prefix: "BIG" },
 ];
 
 export function currencyByCountry(countryCode: string | undefined): string | undefined {
