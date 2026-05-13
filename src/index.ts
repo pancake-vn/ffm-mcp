@@ -22,7 +22,10 @@ import { callGetOrders, fetchAllOrders } from "./api.js";
 import { normalizeOrders } from "./normalize.js";
 
 const DEFAULT_COUNTRY_CODE = process.env.SEA_FULFILLMENT_COUNTRY_CODE || "63";
-const DEFAULT_HOST = process.env.SEA_FULFILLMENT_HOST || "https://fulfillment.pancake.vn";
+// host BẮT BUỘC — không default. 10 supported_hosts trong sea-fulfillment
+// (constant.ex:72) gắn liền với tenant khác nhau (Pancake / G-Solution / AFG /
+// Bigate / …). Default âm thầm dễ gửi token sai tenant.
+const ENV_HOST = process.env.SEA_FULFILLMENT_HOST || "";
 
 const TokenArg = z.string().min(1).optional();
 
@@ -60,6 +63,19 @@ function resolveToken(input: { access_token?: string }): string {
   return token;
 }
 
+function resolveHost(input: { host?: string }): string {
+  const host = input.host || ENV_HOST;
+  if (!host) {
+    throw new Error(
+      "Missing host. BẮT BUỘC set env SEA_FULFILLMENT_HOST (vd " +
+        "https://fulfillment.pancake.vn, https://bigate.co, " +
+        "https://localhost:4004 …) hoặc truyền tham số `host` mỗi call. " +
+        "Xem README §2.2 cho danh sách supported_hosts.",
+    );
+  }
+  return host;
+}
+
 const server = new Server(
   { name: "ffm-mcp", version: "0.1.0" },
   { capabilities: { tools: {} } },
@@ -88,13 +104,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           host: {
             type: "string",
             description:
-              "Base URL (gồm scheme). Default https://fulfillment.pancake.vn. " +
+              "Base URL (gồm scheme). BẮT BUỘC — không default. " +
+              "Nếu env SEA_FULFILLMENT_HOST chưa set thì phải truyền tham số này. " +
               "Các host BE supported (lib/app/constant.ex:72): " +
-              "fulfillment.pancake.vn (app_id=99,PFFM), g-solution.vn (1,GIP), " +
-              "afgwarehouse.net (2,AFG), app.mspeedyexpress.com (3,MSX), " +
-              "lynexpress.co (4,LYN), buber.pancake.vn (5,BUBER), " +
-              "admin.ifgfulfillmentglobal.com (6,IFG), bigate.co (9,BIG). " +
-              "Local dev: https://localhost:4004.",
+              "https://fulfillment.pancake.vn (app_id=99,PFFM), " +
+              "https://g-solution.vn (1,GIP), https://afgwarehouse.net (2,AFG), " +
+              "https://app.mspeedyexpress.com (3,MSX), https://lynexpress.co (4,LYN), " +
+              "https://buber.pancake.vn (5,BUBER), https://admin.ifgfulfillmentglobal.com (6,IFG), " +
+              "https://bigate.co (9,BIG). Local dev: https://localhost:4004.",
           },
           filter: { type: "object", description: "Filter body, vd { order_ids: [..] }, { statuses: [..] }." },
           page: { type: "number" },
@@ -138,6 +155,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "get_orders": {
         const args = GetOrdersInput.parse(rawArgs ?? {});
         const token = resolveToken(args);
+        const host = resolveHost(args);
         const country = args.country_code || DEFAULT_COUNTRY_CODE;
         const params: Record<string, unknown> = {
           ...(args.extra ?? {}),
@@ -151,7 +169,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const data = await callGetOrders({
           accessToken: token,
           countryCode: country,
-          host: args.host || DEFAULT_HOST,
+          host,
           params,
         });
         return {
@@ -162,6 +180,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "get_orders_normalized": {
         const args = GetOrdersNormalizedInput.parse(rawArgs ?? {});
         const token = resolveToken(args);
+        const host = resolveHost(args);
         const country = args.country_code || DEFAULT_COUNTRY_CODE;
 
         let orders: any[];
@@ -171,7 +190,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           orders = await fetchAllOrders({
             accessToken: token,
             countryCode: country,
-            host: args.host || DEFAULT_HOST,
+            host,
             filter: args.filter,
             pageSize: args.page_size,
             maxPages: args.max_pages,
@@ -188,7 +207,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           const data = await callGetOrders({
             accessToken: token,
             countryCode: country,
-            host: args.host || DEFAULT_HOST,
+            host,
             params,
           });
           orders = Array.isArray(data?.data) ? (data.data as any[]) : [];

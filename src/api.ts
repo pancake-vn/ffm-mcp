@@ -7,7 +7,10 @@
 export interface GetOrdersOptions {
   accessToken: string;
   countryCode: string;
-  host?: string; // override host, vd "https://fulfillment.pancake.vn"
+  // host BẮT BUỘC — không default. Caller (index.ts) đã validate qua
+  // resolveHost(). Lý do: 10 supported_hosts khác tenant (constant.ex:72),
+  // default âm thầm dễ sai.
+  host: string;
   params: Record<string, unknown>;
 }
 
@@ -20,15 +23,14 @@ export interface GetOrdersResponse {
   [k: string]: unknown;
 }
 
-const DEFAULT_HOST = "https://fulfillment.pancake.vn";
-
 export async function callGetOrders({
   accessToken,
   countryCode,
   host,
   params,
 }: GetOrdersOptions): Promise<GetOrdersResponse> {
-  const base = (host || DEFAULT_HOST).replace(/\/+$/, "");
+  if (!host) throw new Error("callGetOrders: host is required");
+  const base = host.replace(/\/+$/, "");
   const url =
     `${base}/api/orders/get_orders` +
     `?access_token=${encodeURIComponent(accessToken)}` +
@@ -56,7 +58,7 @@ export async function callGetOrders({
 export async function fetchAllOrders(opts: {
   accessToken: string;
   countryCode: string;
-  host?: string;
+  host: string;
   filter?: Record<string, unknown>;
   pageSize?: number;
   maxPages?: number;

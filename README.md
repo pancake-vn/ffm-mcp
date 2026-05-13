@@ -49,8 +49,8 @@ dùng query `?access_token=…`.
 | Biến / tham số | Mặc định | Note |
 |---|---|---|
 | `SEA_FULFILLMENT_ACCESS_TOKEN` | _(bắt buộc)_ | Có thể override bằng tham số `access_token` mỗi tool call. |
-| `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem bảng dưới. |
-| `SEA_FULFILLMENT_HOST` | `https://fulfillment.pancake.vn` | Base URL của BE, xem bảng host dưới. |
+| `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.2), default âm thầm dễ gửi token sai tenant. Override bằng tham số `host` mỗi tool call. |
+| `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem §2.1. |
 
 ### 2.1. `country_code`
 
@@ -84,7 +84,7 @@ Base URL gồm scheme. Đồng bộ
 
 | Host (`SEA_FULFILLMENT_HOST`) | `app_id` | Prefix | Note |
 |---|---|---|---|
-| `https://fulfillment.pancake.vn` | 99 | PFFM | Production Pancake FFM (mặc định) |
+| `https://fulfillment.pancake.vn` | 99 | PFFM | Production Pancake FFM |
 | `https://g-solution.vn` | 1 | GIP | G-Solution |
 | `https://afgwarehouse.net` | 2 | AFG | AFG Warehouse |
 | `https://app.mspeedyexpress.com` | 3 | MSX | M-Speedy Express |
@@ -118,6 +118,7 @@ truyền env vars.
 claude mcp add ffm \
   --scope user \
   --env SEA_FULFILLMENT_ACCESS_TOKEN=YOUR_TOKEN \
+  --env SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
   --env SEA_FULFILLMENT_COUNTRY_CODE=63 \
   -- node /absolute/path/to/ffm-mcp/dist/index.js
 
@@ -125,6 +126,7 @@ claude mcp add ffm \
 claude mcp add ffm \
   --scope project \
   --env SEA_FULFILLMENT_ACCESS_TOKEN=YOUR_TOKEN \
+  --env SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
   -- node /absolute/path/to/ffm-mcp/dist/index.js
 ```
 
@@ -146,6 +148,7 @@ claude mcp list
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
         "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
     }
@@ -170,6 +173,7 @@ File config:
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
         "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
     }
@@ -192,6 +196,7 @@ Mở **Settings → MCP → Add new MCP server**, hoặc edit file:
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
         "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
     }
@@ -215,6 +220,7 @@ Cline UI → **MCP Servers → Edit Configuration**, hoặc edit:
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
         "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       },
       "disabled": false,
@@ -239,6 +245,7 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
           "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
           "env": {
             "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+            "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
             "SEA_FULFILLMENT_COUNTRY_CODE": "63"
           }
         }
@@ -260,6 +267,7 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
         "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
     }
@@ -280,6 +288,7 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
         "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
         "env": {
           "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+          "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
           "SEA_FULFILLMENT_COUNTRY_CODE": "63"
         }
       },
@@ -296,7 +305,10 @@ Mọi MCP client hỗ trợ **stdio transport** đều dùng được. Pattern c
 ```
 command: node
 args:    ["/absolute/path/to/ffm-mcp/dist/index.js"]
-env:     SEA_FULFILLMENT_ACCESS_TOKEN, SEA_FULFILLMENT_COUNTRY_CODE
+env:
+  SEA_FULFILLMENT_ACCESS_TOKEN  (bắt buộc)
+  SEA_FULFILLMENT_HOST          (bắt buộc, vd https://fulfillment.pancake.vn)
+  SEA_FULFILLMENT_COUNTRY_CODE  (optional, default 63)
 ```
 
 Debug nhanh bằng MCP Inspector:
@@ -304,6 +316,7 @@ Debug nhanh bằng MCP Inspector:
 ```bash
 npx @modelcontextprotocol/inspector \
   -e SEA_FULFILLMENT_ACCESS_TOKEN=YOUR_TOKEN \
+  -e SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
   -e SEA_FULFILLMENT_COUNTRY_CODE=63 \
   node /absolute/path/to/ffm-mcp/dist/index.js
 ```
@@ -404,6 +417,7 @@ rồi trả về danh sách.
 | Triệu chứng | Xử lý |
 |---|---|
 | `Missing access_token` | Truyền tham số `access_token` hoặc set env `SEA_FULFILLMENT_ACCESS_TOKEN`. |
+| `Missing host` | Set env `SEA_FULFILLMENT_HOST` (vd `https://fulfillment.pancake.vn`) hoặc truyền `host` mỗi call. Xem §2.2. |
 | `get_orders HTTP 401` | Token hết hạn / sai. Login lại Pancake FE, copy token mới. |
 | `get_orders HTTP 403` | Token đúng nhưng `country_code` không match country user được phép. |
 | Tool không xuất hiện trong Claude Code | `claude mcp list` xem status. Nếu `✗ Failed`, chạy lệnh ở mục 1 verify binary `node dist/index.js` chạy được. |
