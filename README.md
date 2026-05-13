@@ -92,7 +92,6 @@ Base URL gồm scheme. Đồng bộ
 | `https://buber.pancake.vn` | 5 | BUBER | Buber |
 | `https://admin.ifgfulfillmentglobal.com` | 6 | IFG | IFG Fulfillment Global |
 | `https://bigate.co` | 9 | BIG | Bigate |
-| `https://localhost:4004` | 0 | FFM | Local BE dev (mix phx.server) |
 
 > `app_id` được BE auto-detect từ hostname trong request — bạn không cần
 > truyền `app_id` thủ công. Đảm bảo `access_token` được issue đúng cho host
