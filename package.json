@@ -1,7 +1,7 @@
 {
   "name": "ffm-mcp",
-  "version": "0.1.0",
-  "description": "MCP server cho sea-fulfillment: gọi API /orders/get_orders bằng access_token, normalize order theo các field OrderExportExcel.js dùng để export Excel.",
+  "version": "0.2.0",
+  "description": "MCP server cho sea-fulfillment: tự login bằng username/password, gọi /orders/get_orders, normalize order theo các field OrderExportExcel.js dùng để export Excel.",
   "type": "module",
   "bin": {
     "ffm-mcp": "dist/index.js"

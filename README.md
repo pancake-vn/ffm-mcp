@@ -2,8 +2,11 @@
 
 MCP server cho **sea-fulfillment** (Pancake FFM).
 
-- Gọi API `POST /api/orders/get_orders` ([sea-fulfillment/lib/sea_fulfillment_web/controllers/order_controller.ex:11](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/controllers/order_controller.ex#L11))
-  bằng `access_token` + `country_code`.
+- **Auth tự động**: chỉ cần cấu hình `username` + `password`. Server tự gọi
+  `POST /api/users/login/password` ([router.ex:35](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/router.ex#L35))
+  lấy `access_token` (JWT 30 ngày), cache in-memory theo claim `exp`,
+  re-login khi BE trả 401.
+- Gọi API `POST /api/orders/get_orders` ([sea-fulfillment/lib/sea_fulfillment_web/controllers/order_controller.ex:11](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/controllers/order_controller.ex#L11)).
 - Normalize order theo logic
   [sea-fulfillment-web/components/OrderExportExcel.js](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/OrderExportExcel.js)
   (`formatData`) — trả ra object phẳng với các field dùng để export Excel.
@@ -42,69 +45,57 @@ ffm-mcp             # chạy server
 
 ## 2. Cấu hình auth
 
-Server cần `access_token` (Pancake JWT) — token giống FE
-[sea-fulfillment-web actions/order.js:62](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/actions/order.js#L62)
-dùng query `?access_token=…`.
+Server tự quản lý `access_token` — bạn **chỉ cần cấu hình
+`username` + `password`**. Pancake JWT (30 ngày) được fetch + cache trong
+process, refresh tự động khi sắp hết hạn hoặc khi BE trả 401.
 
 | Biến / tham số | Mặc định | Note |
 |---|---|---|
-| `SEA_FULFILLMENT_ACCESS_TOKEN` | _(bắt buộc)_ | Cách lấy: xem §2.1. Có thể override bằng tham số `access_token` mỗi tool call. |
-| `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.3), default âm thầm dễ gửi token sai tenant. Override bằng tham số `host` mỗi tool call. |
+| `SEA_FULFILLMENT_USERNAME` | _(bắt buộc)_ | Username, email, hoặc số điện thoại. Override bằng tham số `username` mỗi tool call. |
+| `SEA_FULFILLMENT_PASSWORD` | _(bắt buộc)_ | Plain password. Override bằng tham số `password` mỗi tool call. |
+| `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.3), default âm thầm dễ gửi credentials sai tenant. Override bằng tham số `host` mỗi tool call. |
 | `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem §2.2. |
 
-### 2.1. Lấy `access_token` qua API login
+> ⚠️ **Bảo mật:** password được lưu trong env / config file của MCP client
+> (vd `~/.claude.json`, `claude_desktop_config.json`). KHÔNG commit file
+> này vào git public. Cân nhắc tạo user riêng với quyền tối thiểu cho
+> automation thay vì dùng tài khoản admin chính.
 
-Endpoint: `POST {host}/api/users/login/password` ([router.ex:35](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/router.ex#L35),
-[user_controller.ex:272](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/controllers/user_controller.ex#L272)).
+### 2.1. Cách auto-login hoạt động
 
-Body JSON:
+1. Tool call đầu tiên → server `POST {host}/api/users/login/password` với
+   `{username, password}` ([router.ex:35](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/router.ex#L35),
+   [user_controller.ex:272](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/controllers/user_controller.ex#L272)).
+2. BE trả `{ success: true, access_token: "<jwt>", user: {...} }`. Server
+   decode payload JWT (base64) đọc claim `exp`, cache theo key
+   `host::username`.
+3. Tool calls tiếp theo dùng cache. Refresh trước hạn 5 phút để tránh
+   race.
+4. Nếu BE trả 401 (hoặc 200 + `success:false` với message chứa
+   `auth/token/login/unauthor`) → invalidate cache + force re-login + retry
+   1 lần.
 
-| Field | Type | Note |
-|---|---|---|
-| `username` | string | Username, email, hoặc số điện thoại (BE lookup qua `User.get_user_by_username`). |
-| `password` | string | Plain password (BE check bằng bcrypt). |
+Token claim:
 
-`app_id` BE tự detect theo hostname request (`UserAction.handle_app_id`) —
-khớp với bảng `supported_hosts` §2.3. Login lên đúng host của tenant
-mình.
+- `exp = iat + 30*24*60*60` → **30 ngày** ([user_action.ex:283-298](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/user_action.ex#L283-L298)
+  → [tools.ex:968](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/tools.ex#L968)
+  `exp_30_days = cur_iat + 30*24*60*60`).
+- `app_id` BE auto-detect theo hostname → login PHẢI đúng host của tenant
+  mình (`UserAction.handle_app_id`).
 
-#### Ví dụ
+> Cache là in-memory per-process. Restart MCP server (vd reload client) →
+> mất cache, sẽ login lại lần kế.
+
+Debug manual:
 
 ```bash
 curl -X POST https://fulfillment.pancake.vn/api/users/login/password \
   -H 'Content-Type: application/json' \
   -d '{"username":"your-email@example.com","password":"YOUR_PASSWORD"}'
-```
+# → { "success": true, "access_token": "eyJhbGciOiJIUzI1NiJ9.…", "user": {...} }
 
-Response thành công:
-
-```json
-{
-  "success": true,
-  "user": { "id": 123, "email": "…", "group": "USER", "...": "…" },
-  "access_token": "eyJhbGciOiJIUzI1NiJ9.…"
-}
-```
-
-Thất bại: `{ "success": false, "message": "Wrong username or password" }`.
-
-Lấy chuỗi `access_token` paste vào env `SEA_FULFILLMENT_ACCESS_TOKEN`.
-
-#### Token expiry — **30 ngày**
-
-Token là JWT ký bằng HS256, claim `exp = iat + 30 * 24 * 60 * 60` (xem
-[user_action.ex:283-298](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/user_action.ex#L283-L298)
-→ [tools.ex:968](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/tools.ex#L968)
-`exp_30_days = cur_iat + 30*24*60*60`).
-
-→ Cần re-login mỗi 30 ngày. Khi expired sẽ thấy `get_orders HTTP 401`,
-chạy lại `curl` login để lấy token mới + update env client MCP.
-
-Có thể decode JWT payload (không cần secret) để xem `exp` thực tế:
-
-```bash
+# Decode exp của JWT để verify 30 ngày:
 echo 'eyJhbGciOiJI…' | cut -d. -f2 | base64 -d 2>/dev/null | jq .exp
-# → 1764000000  (unix epoch — chia 86400 ra ngày)
 ```
 
 ### 2.2. `country_code`
@@ -149,11 +140,8 @@ Base URL gồm scheme. Đồng bộ
 | `https://bigate.co` | 9 | BIG | Bigate |
 
 > `app_id` được BE auto-detect từ hostname trong request — bạn không cần
-> truyền `app_id` thủ công. Đảm bảo `access_token` được issue đúng cho host
-> đó (token cross-host sẽ trả 401/403).
-
-> **Bảo mật:** `access_token` cho phép thao tác đầy đủ user. Lưu trong env
-> hoặc config client — đừng commit thẳng.
+> truyền `app_id` thủ công. Login phải đúng host của tenant mình; login
+> cross-host sẽ trả `Wrong username or password`.
 
 ---
 
@@ -171,7 +159,8 @@ truyền env vars.
 # Scope user (mọi project):
 claude mcp add ffm \
   --scope user \
-  --env SEA_FULFILLMENT_ACCESS_TOKEN=YOUR_TOKEN \
+  --env SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
+  --env SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
   --env SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
   --env SEA_FULFILLMENT_COUNTRY_CODE=63 \
   -- node /absolute/path/to/ffm-mcp/dist/index.js
@@ -179,7 +168,8 @@ claude mcp add ffm \
 # Hoặc scope project (chỉ repo hiện tại, commit kèm code được):
 claude mcp add ffm \
   --scope project \
-  --env SEA_FULFILLMENT_ACCESS_TOKEN=YOUR_TOKEN \
+  --env SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
+  --env SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
   --env SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
   -- node /absolute/path/to/ffm-mcp/dist/index.js
 ```
@@ -201,7 +191,8 @@ claude mcp list
       "command": "node",
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
-        "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
+        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
         "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
@@ -226,7 +217,8 @@ File config:
       "command": "node",
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
-        "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
+        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
         "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
@@ -249,7 +241,8 @@ Mở **Settings → MCP → Add new MCP server**, hoặc edit file:
       "command": "node",
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
-        "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
+        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
         "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
@@ -273,7 +266,8 @@ Cline UI → **MCP Servers → Edit Configuration**, hoặc edit:
       "command": "node",
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
-        "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
+        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
         "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       },
@@ -298,7 +292,8 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
           "command": "node",
           "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
           "env": {
-            "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+            "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
+            "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
             "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
             "SEA_FULFILLMENT_COUNTRY_CODE": "63"
           }
@@ -320,7 +315,8 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
       "command": "node",
       "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
       "env": {
-        "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
+        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
         "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
         "SEA_FULFILLMENT_COUNTRY_CODE": "63"
       }
@@ -341,7 +337,8 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
         "path": "node",
         "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
         "env": {
-          "SEA_FULFILLMENT_ACCESS_TOKEN": "YOUR_TOKEN",
+          "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
+          "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
           "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
           "SEA_FULFILLMENT_COUNTRY_CODE": "63"
         }
@@ -360,7 +357,8 @@ Mọi MCP client hỗ trợ **stdio transport** đều dùng được. Pattern c
 command: node
 args:    ["/absolute/path/to/ffm-mcp/dist/index.js"]
 env:
-  SEA_FULFILLMENT_ACCESS_TOKEN  (bắt buộc)
+  SEA_FULFILLMENT_USERNAME      (bắt buộc)
+  SEA_FULFILLMENT_PASSWORD      (bắt buộc)
   SEA_FULFILLMENT_HOST          (bắt buộc, vd https://fulfillment.pancake.vn)
   SEA_FULFILLMENT_COUNTRY_CODE  (optional, default 63)
 ```
@@ -369,7 +367,8 @@ Debug nhanh bằng MCP Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector \
-  -e SEA_FULFILLMENT_ACCESS_TOKEN=YOUR_TOKEN \
+  -e SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
+  -e SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
   -e SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
   -e SEA_FULFILLMENT_COUNTRY_CODE=63 \
   node /absolute/path/to/ffm-mcp/dist/index.js
@@ -385,9 +384,10 @@ Pass-through tới BE — trả raw response (`data`, `page`, `total_pages`, …
 
 | field | type | note |
 |---|---|---|
-| `access_token` | string? | optional, fallback env |
+| `username` | string? | override env `SEA_FULFILLMENT_USERNAME` |
+| `password` | string? | override env `SEA_FULFILLMENT_PASSWORD` |
+| `host` | string? | override env `SEA_FULFILLMENT_HOST` (bắt buộc nếu env chưa set) |
 | `country_code` | string? | default `"63"` |
-| `host` | string? | override base URL |
 | `filter` | object? | vd `{ "order_ids": [1,2] }`, `{ "statuses": ["shipped"] }` |
 | `page` | number? | |
 | `page_size` | number? | |
@@ -470,9 +470,10 @@ rồi trả về danh sách.
 
 | Triệu chứng | Xử lý |
 |---|---|
-| `Missing access_token` | Truyền tham số `access_token` hoặc set env `SEA_FULFILLMENT_ACCESS_TOKEN`. |
+| `Missing credentials` | Set env `SEA_FULFILLMENT_USERNAME` + `SEA_FULFILLMENT_PASSWORD` hoặc truyền `username`/`password` mỗi call. Xem §2. |
 | `Missing host` | Set env `SEA_FULFILLMENT_HOST` (vd `https://fulfillment.pancake.vn`) hoặc truyền `host` mỗi call. Xem §2.3. |
-| `get_orders HTTP 401` | Token hết hạn (30 ngày — xem §2.1) hoặc sai. Chạy lại `curl POST /api/users/login/password` ở §2.1 lấy token mới, update env. |
+| `login HTTP 401` / `login failed: Wrong username or password` | Sai username/password, hoặc login sai tenant (host không khớp với tenant của user). Check lại env / cấu hình client MCP. |
+| `get_orders HTTP 401` | Token cache đã bị BE revoke giữa chừng (đổi password, force logout…). Server đã auto-retry 1 lần; nếu vẫn fail → kiểm tra password env có còn đúng không. |
 | `get_orders HTTP 403` | Token đúng nhưng `country_code` không match country user được phép. |
 | Tool không xuất hiện trong Claude Code | `claude mcp list` xem status. Nếu `✗ Failed`, chạy lệnh ở mục 1 verify binary `node dist/index.js` chạy được. |
 | Server log `0_VN_orders_alias` | Bạn truyền `country_code=VN/84` — sai. Phải là `63 / 66 / 60 / 62 / 65`. |
