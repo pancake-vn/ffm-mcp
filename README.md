@@ -42,17 +42,72 @@ ffm-mcp             # chạy server
 
 ## 2. Cấu hình auth
 
-Server cần `access_token` (Pancake) — token giống FE
+Server cần `access_token` (Pancake JWT) — token giống FE
 [sea-fulfillment-web actions/order.js:62](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/actions/order.js#L62)
 dùng query `?access_token=…`.
 
 | Biến / tham số | Mặc định | Note |
 |---|---|---|
-| `SEA_FULFILLMENT_ACCESS_TOKEN` | _(bắt buộc)_ | Có thể override bằng tham số `access_token` mỗi tool call. |
-| `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.2), default âm thầm dễ gửi token sai tenant. Override bằng tham số `host` mỗi tool call. |
-| `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem §2.1. |
+| `SEA_FULFILLMENT_ACCESS_TOKEN` | _(bắt buộc)_ | Cách lấy: xem §2.1. Có thể override bằng tham số `access_token` mỗi tool call. |
+| `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.3), default âm thầm dễ gửi token sai tenant. Override bằng tham số `host` mỗi tool call. |
+| `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem §2.2. |
 
-### 2.1. `country_code`
+### 2.1. Lấy `access_token` qua API login
+
+Endpoint: `POST {host}/api/users/login/password` ([router.ex:35](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/router.ex#L35),
+[user_controller.ex:272](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/controllers/user_controller.ex#L272)).
+
+Body JSON:
+
+| Field | Type | Note |
+|---|---|---|
+| `username` | string | Username, email, hoặc số điện thoại (BE lookup qua `User.get_user_by_username`). |
+| `password` | string | Plain password (BE check bằng bcrypt). |
+
+`app_id` BE tự detect theo hostname request (`UserAction.handle_app_id`) —
+khớp với bảng `supported_hosts` §2.3. Login lên đúng host của tenant
+mình.
+
+#### Ví dụ
+
+```bash
+curl -X POST https://fulfillment.pancake.vn/api/users/login/password \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"your-email@example.com","password":"YOUR_PASSWORD"}'
+```
+
+Response thành công:
+
+```json
+{
+  "success": true,
+  "user": { "id": 123, "email": "…", "group": "USER", "...": "…" },
+  "access_token": "eyJhbGciOiJIUzI1NiJ9.…"
+}
+```
+
+Thất bại: `{ "success": false, "message": "Wrong username or password" }`.
+
+Lấy chuỗi `access_token` paste vào env `SEA_FULFILLMENT_ACCESS_TOKEN`.
+
+#### Token expiry — **30 ngày**
+
+Token là JWT ký bằng HS256, claim `exp = iat + 30 * 24 * 60 * 60` (xem
+[user_action.ex:283-298](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/user_action.ex#L283-L298)
+→ [tools.ex:968](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/tools.ex#L968)
+`exp_30_days = cur_iat + 30*24*60*60`).
+
+→ Cần re-login mỗi 30 ngày. Khi expired sẽ thấy `get_orders HTTP 401`,
+chạy lại `curl` login để lấy token mới + update env client MCP.
+
+Có thể decode JWT payload (không cần secret) để xem `exp` thực tế:
+
+```bash
+echo 'eyJhbGciOiJI…' | cut -d. -f2 | base64 -d 2>/dev/null | jq .exp
+# → 1764000000  (unix epoch — chia 86400 ra ngày)
+```
+
+### 2.2. `country_code`
 
 Phone-code (string) — KHÔNG dùng ISO 2 chữ. Đồng bộ
 [sea-fulfillment lib/app/constant.ex:93-99](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L93-L99)
@@ -76,7 +131,7 @@ Ngoài ra BE còn accept (theo
 > KHÔNG dùng `"VN"`, `"84"`, `"VND"` — Vietnam KHÔNG nằm trong supported
 > countries (CLAUDE.md §7).
 
-### 2.2. `host`
+### 2.3. `host`
 
 Base URL gồm scheme. Đồng bộ
 [sea-fulfillment lib/app/constant.ex:72-83](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L72-L83)
@@ -416,8 +471,8 @@ rồi trả về danh sách.
 | Triệu chứng | Xử lý |
 |---|---|
 | `Missing access_token` | Truyền tham số `access_token` hoặc set env `SEA_FULFILLMENT_ACCESS_TOKEN`. |
-| `Missing host` | Set env `SEA_FULFILLMENT_HOST` (vd `https://fulfillment.pancake.vn`) hoặc truyền `host` mỗi call. Xem §2.2. |
-| `get_orders HTTP 401` | Token hết hạn / sai. Login lại Pancake FE, copy token mới. |
+| `Missing host` | Set env `SEA_FULFILLMENT_HOST` (vd `https://fulfillment.pancake.vn`) hoặc truyền `host` mỗi call. Xem §2.3. |
+| `get_orders HTTP 401` | Token hết hạn (30 ngày — xem §2.1) hoặc sai. Chạy lại `curl POST /api/users/login/password` ở §2.1 lấy token mới, update env. |
 | `get_orders HTTP 403` | Token đúng nhưng `country_code` không match country user được phép. |
 | Tool không xuất hiện trong Claude Code | `claude mcp list` xem status. Nếu `✗ Failed`, chạy lệnh ở mục 1 verify binary `node dist/index.js` chạy được. |
 | Server log `0_VN_orders_alias` | Bạn truyền `country_code=VN/84` — sai. Phải là `63 / 66 / 60 / 62 / 65`. |

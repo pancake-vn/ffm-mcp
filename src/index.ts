@@ -69,7 +69,7 @@ function resolveHost(input: { host?: string }): string {
     throw new Error(
       "Missing host. BẮT BUỘC set env SEA_FULFILLMENT_HOST (vd " +
         "https://fulfillment.pancake.vn, https://bigate.co …) hoặc " +
-        "truyền tham số `host` mỗi call. Xem README §2.2 cho danh sách " +
+        "truyền tham số `host` mỗi call. Xem README §2.3 cho danh sách " +
         "supported_hosts.",
     );
   }
