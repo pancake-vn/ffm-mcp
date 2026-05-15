@@ -108,9 +108,12 @@ const COMMON_PROPERTIES = {
       "packing/pending/shipped/delivered/returning/returned/cancel), " +
       "sub_status, printed_count, processing_count; date range (dynamic " +
       "theo time_key): time_key (vd 'inserted_at'/'updated_at'/" +
-      "'assign_sale_at'/'expected_receipt_date'), '<time_key>:ranges' = " +
-      "{ since, until } (unix epoch seconds), '<time_key>:editor_ids' " +
-      "(number[]); advance: shop_id, partner_id, service_types, tags, " +
+      "'assign_sale_at'/'picked_up_at'/'send_to_partner_at'/" +
+      "'delivered_at'/'first_assign_sale_at'), '<time_key>:ranges' = " +
+      "{ since, until } với ISO 8601 NaiveDateTime " +
+      "'YYYY-MM-DDTHH:MM:SS' (KHÔNG dùng unix epoch — BE silently trả " +
+      "[]), '<time_key>:editor_ids' (number[]); advance: shop_id, " +
+      "partner_id, service_types, tags, " +
       "product_id, variation_id, total_quantity {min,max}, cod {min,max}, " +
       "is_duplicated_phone, is_duplicated_ip, courier_reconciliation_status, " +
       "customer_reconciliation_status, assigning_sale_id, assigning_care_id, " +
