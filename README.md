@@ -54,7 +54,10 @@ process, refresh tự động khi sắp hết hạn hoặc khi BE trả 401.
 | `SEA_FULFILLMENT_USERNAME` | _(bắt buộc)_ | Username, email, hoặc số điện thoại. Chỉ đọc từ env — không phải param của tool. |
 | `SEA_FULFILLMENT_PASSWORD` | _(bắt buộc)_ | Plain password. Chỉ đọc từ env — không phải param của tool. |
 | `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.3), default âm thầm dễ gửi credentials sai tenant. Override bằng tham số `host` mỗi tool call. |
-| `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem §2.2. |
+
+> `country_code` **KHÔNG nằm ở env** — bắt buộc truyền mỗi tool call. Lý
+> do: 1 user có thể quản nhiều country, default env một country dễ dẫn
+> tới gọi nhầm. Bảng phone-code: xem §2.2.
 
 > ⚠️ **Bảo mật:** password được lưu trong env / config file của MCP client
 > (vd `~/.claude.json`, `claude_desktop_config.json`). KHÔNG commit file
@@ -98,9 +101,10 @@ curl -X POST https://fulfillment.pancake.vn/api/users/login/password \
 echo 'eyJhbGciOiJI…' | cut -d. -f2 | base64 -d 2>/dev/null | jq .exp
 ```
 
-### 2.2. `country_code`
+### 2.2. `country_code` (tham số tool, không phải env)
 
-Phone-code (string) — KHÔNG dùng ISO 2 chữ. Đồng bộ
+Phone-code (string) — **BẮT BUỘC truyền mỗi tool call**, không có
+default env. KHÔNG dùng ISO 2 chữ. Đồng bộ
 [sea-fulfillment lib/app/constant.ex:93-99](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L93-L99)
 (`supported_countries` — có currency map):
 
@@ -162,7 +166,6 @@ claude mcp add ffm \
   --env SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
   --env SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
   --env SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
-  --env SEA_FULFILLMENT_COUNTRY_CODE=63 \
   -- node /absolute/path/to/ffm-mcp/dist/index.js
 
 # Hoặc scope project (chỉ repo hiện tại, commit kèm code được):
@@ -193,8 +196,7 @@ claude mcp list
       "env": {
         "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
         "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
-        "SEA_FULFILLMENT_COUNTRY_CODE": "63"
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
       }
     }
   }
@@ -219,8 +221,7 @@ File config:
       "env": {
         "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
         "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
-        "SEA_FULFILLMENT_COUNTRY_CODE": "63"
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
       }
     }
   }
@@ -243,8 +244,7 @@ Mở **Settings → MCP → Add new MCP server**, hoặc edit file:
       "env": {
         "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
         "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
-        "SEA_FULFILLMENT_COUNTRY_CODE": "63"
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
       }
     }
   }
@@ -268,8 +268,7 @@ Cline UI → **MCP Servers → Edit Configuration**, hoặc edit:
       "env": {
         "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
         "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
-        "SEA_FULFILLMENT_COUNTRY_CODE": "63"
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
       },
       "disabled": false,
       "autoApprove": []
@@ -294,8 +293,7 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
           "env": {
             "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
             "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-            "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
-            "SEA_FULFILLMENT_COUNTRY_CODE": "63"
+            "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
           }
         }
       }
@@ -317,8 +315,7 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
       "env": {
         "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
         "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
-        "SEA_FULFILLMENT_COUNTRY_CODE": "63"
+        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
       }
     }
   }
@@ -339,8 +336,7 @@ Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
         "env": {
           "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
           "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-          "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn",
-          "SEA_FULFILLMENT_COUNTRY_CODE": "63"
+          "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
         }
       },
       "settings": {}
@@ -360,7 +356,8 @@ env:
   SEA_FULFILLMENT_USERNAME      (bắt buộc)
   SEA_FULFILLMENT_PASSWORD      (bắt buộc)
   SEA_FULFILLMENT_HOST          (bắt buộc, vd https://fulfillment.pancake.vn)
-  SEA_FULFILLMENT_COUNTRY_CODE  (optional, default 63)
+
+`country_code` truyền theo từng tool call (xem §2.2), không nằm trong env.
 ```
 
 Debug nhanh bằng MCP Inspector:
@@ -370,7 +367,6 @@ npx @modelcontextprotocol/inspector \
   -e SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
   -e SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
   -e SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
-  -e SEA_FULFILLMENT_COUNTRY_CODE=63 \
   node /absolute/path/to/ffm-mcp/dist/index.js
 ```
 
@@ -387,8 +383,8 @@ Pass-through tới BE — trả raw response (`data`, `page`, `total_pages`, …
 
 | field | type | note |
 |---|---|---|
+| `country_code` | **string** (bắt buộc) | Phone-code (vd `"63"`, `"66"`…) — không default. Xem §2.2. |
 | `host` | string? | override env `SEA_FULFILLMENT_HOST` (bắt buộc nếu env chưa set) |
-| `country_code` | string? | default `"63"` |
 | `filter` | object? | object chứa filter keys — xem §4.1 |
 | `page` | number? | pagination (1-based). Thường nằm trong `filter`, nhưng có thể truyền top-level. |
 | `page_size` | number? | default FE dùng 30 (table) / 500 (export). Max ~2000. |

@@ -23,13 +23,14 @@ import { z } from "zod";
 import { callGetOrders, fetchAllOrders } from "./api.js";
 import { normalizeOrders } from "./normalize.js";
 
-const DEFAULT_COUNTRY_CODE = process.env.SEA_FULFILLMENT_COUNTRY_CODE || "63";
 const ENV_HOST = process.env.SEA_FULFILLMENT_HOST || "";
 const ENV_USERNAME = process.env.SEA_FULFILLMENT_USERNAME || "";
 const ENV_PASSWORD = process.env.SEA_FULFILLMENT_PASSWORD || "";
 
 const BaseInput = {
-  country_code: z.string().optional(),
+  // BẮT BUỘC mỗi tool call — không có default env. Tránh tình huống config
+  // env một country nhưng dữ liệu user cần lại nằm country khác.
+  country_code: z.string().min(1),
   host: z.string().url().optional(),
   filter: z.record(z.unknown()).optional(),
   page: z.number().int().positive().optional(),
@@ -81,10 +82,10 @@ const COMMON_PROPERTIES = {
   country_code: {
     type: "string",
     description:
-      "Phone-code quốc gia. Supported (có currency map): " +
+      "BẮT BUỘC. Phone-code quốc gia. Supported (có currency map): " +
       "63=Philippines(PHP), 66=Thailand(THB), 60=Malaysia(MYR), " +
       "62=Indonesia(IDR), 65=Singapore(SGD). BE còn accept 856=Laos " +
-      "nhưng MCP không có currency map → tiền fallback /100. Default 63.",
+      "nhưng MCP không có currency map → tiền fallback /100.",
   },
   host: {
     type: "string",
@@ -139,6 +140,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "JWT 30 ngày, re-login khi 401.",
       inputSchema: {
         type: "object",
+        required: ["country_code"],
         properties: {
           ...COMMON_PROPERTIES,
           load_full: {
@@ -163,6 +165,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "get_orders).",
       inputSchema: {
         type: "object",
+        required: ["country_code"],
         properties: {
           ...COMMON_PROPERTIES,
           paginate: {
@@ -187,7 +190,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const args = GetOrdersInput.parse(rawArgs ?? {});
         const { username, password } = resolveCredentials();
         const host = resolveHost(args);
-        const country = args.country_code || DEFAULT_COUNTRY_CODE;
+        const country = args.country_code;
         const params: Record<string, unknown> = {
           ...(args.extra ?? {}),
           filter: args.filter ?? {},
@@ -210,7 +213,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const args = GetOrdersNormalizedInput.parse(rawArgs ?? {});
         const { username, password } = resolveCredentials();
         const host = resolveHost(args);
-        const country = args.country_code || DEFAULT_COUNTRY_CODE;
+        const country = args.country_code;
         const ctx = { host, username, password, countryCode: country };
 
         let orders: any[];
