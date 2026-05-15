@@ -113,7 +113,23 @@ const COMMON_PROPERTIES = {
   },
   filter: {
     type: "object",
-    description: "Filter body, vd { order_ids: [..] }, { statuses: [..] }.",
+    description:
+      "Filter object — keys phổ biến (FE sea-fulfillment-web dùng): " +
+      "pagination: page, page_size; search: keyword (string[]), order_ids " +
+      "(number[]); status: statuses (string[] — new/confirmed/printed/" +
+      "packing/pending/shipped/delivered/returning/returned/cancel), " +
+      "sub_status, printed_count, processing_count; date range (dynamic " +
+      "theo time_key): time_key (vd 'inserted_at'/'updated_at'/" +
+      "'assign_sale_at'/'expected_receipt_date'), '<time_key>:ranges' = " +
+      "{ since, until } (unix epoch seconds), '<time_key>:editor_ids' " +
+      "(number[]); advance: shop_id, partner_id, service_types, tags, " +
+      "product_id, variation_id, total_quantity {min,max}, cod {min,max}, " +
+      "is_duplicated_phone, is_duplicated_ip, courier_reconciliation_status, " +
+      "customer_reconciliation_status, assigning_sale_id, assigning_care_id, " +
+      "delivery_address_id, waybill_number, combo_product, order_source, " +
+      "saved_filter_id, slot_warehouse_id. Sort: dùng `extra` field — " +
+      "{ sort_by, sort_direction:'asc'|'desc' }. Xem README §4.1 cho " +
+      "chi tiết.",
   },
   page: { type: "number" },
   page_size: { type: "number" },

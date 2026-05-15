@@ -388,12 +388,90 @@ Pass-through tới BE — trả raw response (`data`, `page`, `total_pages`, …
 | `password` | string? | override env `SEA_FULFILLMENT_PASSWORD` |
 | `host` | string? | override env `SEA_FULFILLMENT_HOST` (bắt buộc nếu env chưa set) |
 | `country_code` | string? | default `"63"` |
-| `filter` | object? | vd `{ "order_ids": [1,2] }`, `{ "statuses": ["shipped"] }` |
-| `page` | number? | |
-| `page_size` | number? | |
-| `load_full` | boolean? | true → BE trả full schema (cần cho normalize) |
-| `is_summarize` | boolean? | |
-| `extra` | object? | merge vào body request |
+| `filter` | object? | object chứa filter keys — xem §4.1 |
+| `page` | number? | pagination (1-based). Thường nằm trong `filter`, nhưng có thể truyền top-level. |
+| `page_size` | number? | default FE dùng 30 (table) / 500 (export). Max ~2000. |
+| `load_full` | boolean? | true → BE trả full order schema (shipping_info, items, partner, status_histories, …). Cần cho `get_orders_normalized`. |
+| `is_summarize` | boolean? | true → BE chỉ trả `id` + counters, không enrich. |
+| `extra` | object? | merge vào body request (vd `sort_by`, `sort_direction`, `load_partner`, …). |
+
+#### 4.1. `filter` chi tiết
+
+Reverse-engineer từ [sea-fulfillment-web pages/order/index.js:140](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/pages/order/index.js#L140)
+(`getOrders({ filter, sort_by, sort_direction })`) + các filter components ở
+[index.js:564-568](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/pages/order/index.js#L564-L568)
+(`OrderSortPopover`, `OrderFilterPrintedCount`, `OrderFilterProcessingCount`,
+`RangePicker`, `AdvanceFilterV1`).
+
+**Pagination + search:**
+
+| Key | Type | Note |
+|---|---|---|
+| `page` | number | 1-based |
+| `page_size` | number | default 30 ở FE table |
+| `keyword` | string[] | full-text search (display_id, phone, name, …) |
+| `order_ids` | number[] | filter list ID cụ thể (dùng cho export flow [OrderExportExcel.js:94](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/OrderExportExcel.js#L94)) |
+
+**Status / counter:**
+
+| Key | Type | Note |
+|---|---|---|
+| `statuses` | string[] | `new`, `confirmed`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`, … (xem `ORDER_STATUS_TEXT` trong [src/constants.ts](src/constants.ts)) |
+| `sub_status` | string | sub-status filter (filter ngang StatusCounter) |
+| `printed_count` | string/number | `OrderFilterPrintedCount` — vd `0` để lọc đơn chưa in |
+| `processing_count` | string/number | `OrderFilterProcessingCount` — count đơn đang xử lý |
+
+**Date range (via [RangePicker.js:247-254](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/RangePicker.js#L247-L254)) — dynamic key theo `time_key`:**
+
+| Key | Type | Note |
+|---|---|---|
+| `time_key` | string | Field timestamp filter theo, vd `inserted_at`, `updated_at`, `assign_sale_at`, `expected_receipt_date`, `assign_care_at`. |
+| `<time_key>:ranges` | `{ since, until }` | unix epoch seconds. VD `"inserted_at:ranges": { "since": 1747094400, "until": 1747180799 }`. |
+| `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
+
+**Advance filter ([index.js:82-105](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/pages/order/index.js#L82-L105)):**
+
+| Key | Type | Note |
+|---|---|---|
+| `shop_id` | number[] | |
+| `partner_id` | number[] | courier/partner |
+| `service_types` | string[] | `cod`, `non_cod`, … (tùy partner) |
+| `tags` | number[] | tag ID array |
+| `product_id` | number[] | |
+| `variation_id` | number[] | |
+| `total_quantity` | `{ min, max }` | |
+| `cod` | `{ min, max }` | range tiền COD (đơn vị nhỏ — chia /100 với non-int currency) |
+| `is_duplicated_phone` | boolean | đơn trùng số điện thoại |
+| `is_duplicated_ip` | boolean | đơn trùng IP |
+| `courier_reconciliation_status` | string[] | `not_reconciled`, `reconciled`, … |
+| `customer_reconciliation_status` | string[] | tương tự |
+| `assigning_sale_id` | number[] | nhân viên sale được assign |
+| `assigning_care_id` | number[] | nhân viên CSKH |
+| `delivery_address_id` | number[] | địa chỉ giao hàng (cluster theo addr) |
+| `waybill_number` | string | tracking number partner |
+| `combo_product` | number[] | combo / bundle product ID |
+| `order_source` | string[] | nguồn đơn (`pos`, `web`, `api`, …) |
+| `saved_filter_id` | number | preset filter đã save |
+| `slot_warehouse_id` | number[] | slot/warehouse ID |
+
+**Sort (top-level, ngoài `filter`):**
+
+| Key | Type | Note |
+|---|---|---|
+| `sort_by` | string | `inserted_at`, `updated_at`, `total_price`, `total_quantity`, `cod`, … |
+| `sort_direction` | `"asc"` / `"desc"` | |
+
+Truyền `sort_by` / `sort_direction` qua field `extra` (vì MCP tool chỉ
+nhận `filter` ở top-level):
+
+```json
+{ "filter": { "statuses": ["shipped"] }, "extra": { "sort_by": "inserted_at", "sort_direction": "desc" } }
+```
+
+**Lưu ý:** đây là filter keys FE đang dùng — không guarantee BE accept hết
+hoặc chưa accept thêm key khác. Khi nghi ngờ, kiểm tra
+[Services.EsV2.Order.get_orders](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/services/es_v2/order.ex)
+(BE).
 
 ### `get_orders_normalized`
 
