@@ -422,8 +422,8 @@ Reverse-engineer từ [sea-fulfillment-web pages/order/index.js:140](https://git
 
 | Key | Type | Note |
 |---|---|---|
-| `time_key` | string | Field timestamp filter theo, vd `inserted_at`, `updated_at`, `assign_sale_at`, `expected_receipt_date`, `assign_care_at`. |
-| `<time_key>:ranges` | `{ since, until }` | unix epoch seconds. VD `"inserted_at:ranges": { "since": 1747094400, "until": 1747180799 }`. |
+| `time_key` | string | Field timestamp filter theo, vd `inserted_at`, `updated_at`, `assign_sale_at`, `picked_up_at`, `send_to_partner_at`, `delivered_at`, `first_assign_sale_at`. |
+| `<time_key>:ranges` | `{ since, until }` | **ISO 8601 NaiveDateTime string** (`"YYYY-MM-DDTHH:MM:SS"`, BE parse qua `Tools.parse_ranges` → `NaiveDateTime.from_iso8601!`). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch hay timezone offset — BE sẽ silently trả mảng rỗng. |
 | `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
 
 **Advance filter ([index.js:82-105](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/pages/order/index.js#L82-L105)):**
