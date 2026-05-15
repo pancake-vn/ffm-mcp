@@ -29,8 +29,6 @@ const ENV_USERNAME = process.env.SEA_FULFILLMENT_USERNAME || "";
 const ENV_PASSWORD = process.env.SEA_FULFILLMENT_PASSWORD || "";
 
 const BaseInput = {
-  username: z.string().min(1).optional(),
-  password: z.string().min(1).optional(),
   country_code: z.string().optional(),
   host: z.string().url().optional(),
   filter: z.record(z.unknown()).optional(),
@@ -51,21 +49,16 @@ const GetOrdersNormalizedInput = z.object({
   max_pages: z.number().int().positive().max(100).optional(),
 });
 
-function resolveCredentials(input: { username?: string; password?: string }): {
-  username: string;
-  password: string;
-} {
-  const username = input.username || ENV_USERNAME;
-  const password = input.password || ENV_PASSWORD;
-  if (!username || !password) {
+function resolveCredentials(): { username: string; password: string } {
+  if (!ENV_USERNAME || !ENV_PASSWORD) {
     throw new Error(
       "Missing credentials. BẮT BUỘC set env SEA_FULFILLMENT_USERNAME + " +
-        "SEA_FULFILLMENT_PASSWORD (server sẽ tự gọi POST " +
-        "/api/users/login/password lấy access_token, cache + refresh tự " +
-        "động). Hoặc truyền tham số `username` / `password` mỗi tool call.",
+        "SEA_FULFILLMENT_PASSWORD trong config MCP client. Server sẽ tự " +
+        "gọi POST /api/users/login/password lấy access_token, cache + " +
+        "refresh tự động.",
     );
   }
-  return { username, password };
+  return { username: ENV_USERNAME, password: ENV_PASSWORD };
 }
 
 function resolveHost(input: { host?: string }): string {
@@ -81,16 +74,10 @@ function resolveHost(input: { host?: string }): string {
   return host;
 }
 
+// Auth (username/password) lấy hoàn toàn từ env — KHÔNG expose ra tool
+// input. Caller (AI client) chỉ truyền query params; server tự handle
+// login + cache + refresh.
 const COMMON_PROPERTIES = {
-  username: {
-    type: "string",
-    description:
-      "Override env SEA_FULFILLMENT_USERNAME. Accept username / email / phone.",
-  },
-  password: {
-    type: "string",
-    description: "Override env SEA_FULFILLMENT_PASSWORD.",
-  },
   country_code: {
     type: "string",
     description:
@@ -198,7 +185,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     switch (name) {
       case "get_orders": {
         const args = GetOrdersInput.parse(rawArgs ?? {});
-        const { username, password } = resolveCredentials(args);
+        const { username, password } = resolveCredentials();
         const host = resolveHost(args);
         const country = args.country_code || DEFAULT_COUNTRY_CODE;
         const params: Record<string, unknown> = {
@@ -221,7 +208,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       case "get_orders_normalized": {
         const args = GetOrdersNormalizedInput.parse(rawArgs ?? {});
-        const { username, password } = resolveCredentials(args);
+        const { username, password } = resolveCredentials();
         const host = resolveHost(args);
         const country = args.country_code || DEFAULT_COUNTRY_CODE;
         const ctx = { host, username, password, countryCode: country };

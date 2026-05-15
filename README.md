@@ -51,8 +51,8 @@ process, refresh tự động khi sắp hết hạn hoặc khi BE trả 401.
 
 | Biến / tham số | Mặc định | Note |
 |---|---|---|
-| `SEA_FULFILLMENT_USERNAME` | _(bắt buộc)_ | Username, email, hoặc số điện thoại. Override bằng tham số `username` mỗi tool call. |
-| `SEA_FULFILLMENT_PASSWORD` | _(bắt buộc)_ | Plain password. Override bằng tham số `password` mỗi tool call. |
+| `SEA_FULFILLMENT_USERNAME` | _(bắt buộc)_ | Username, email, hoặc số điện thoại. Chỉ đọc từ env — không phải param của tool. |
+| `SEA_FULFILLMENT_PASSWORD` | _(bắt buộc)_ | Plain password. Chỉ đọc từ env — không phải param của tool. |
 | `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.3), default âm thầm dễ gửi credentials sai tenant. Override bằng tham số `host` mỗi tool call. |
 | `SEA_FULFILLMENT_COUNTRY_CODE` | `63` | Phone-code, xem §2.2. |
 
@@ -382,10 +382,11 @@ npx @modelcontextprotocol/inspector \
 
 Pass-through tới BE — trả raw response (`data`, `page`, `total_pages`, …).
 
+> Auth (`username` / `password`) lấy hoàn toàn từ env — không phải param
+> của tool. Server tự login + cache + refresh (xem §2.1).
+
 | field | type | note |
 |---|---|---|
-| `username` | string? | override env `SEA_FULFILLMENT_USERNAME` |
-| `password` | string? | override env `SEA_FULFILLMENT_PASSWORD` |
 | `host` | string? | override env `SEA_FULFILLMENT_HOST` (bắt buộc nếu env chưa set) |
 | `country_code` | string? | default `"63"` |
 | `filter` | object? | object chứa filter keys — xem §4.1 |
