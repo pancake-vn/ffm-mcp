@@ -426,30 +426,39 @@ Reverse-engineer từ [sea-fulfillment-web pages/order/index.js:140](https://git
 | `<time_key>:ranges` | `{ since, until }` | **ISO 8601 NaiveDateTime string** (`"YYYY-MM-DDTHH:MM:SS"`, BE parse qua `Tools.parse_ranges` → `NaiveDateTime.from_iso8601!`). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch hay timezone offset — BE sẽ silently trả mảng rỗng. |
 | `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
 
-**Advance filter ([index.js:82-105](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/pages/order/index.js#L82-L105)):**
+**Advance filter** — list option lấy thẳng từ FE `AdvanceFilterV1` ([components/AdvanceFilterV1.js:1007-1041](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/AdvanceFilterV1.js#L1007-L1041)). Mỗi key BE chỉ accept đúng các enum dưới đây — KHÔNG phải free-form string/array tùy ý.
 
-| Key | Type | Note |
-|---|---|---|
-| `shop_id` | number[] | |
-| `partner_id` | number[] | courier/partner |
-| `service_types` | string[] | `cod`, `non_cod`, … (tùy partner) |
-| `tags` | number[] | tag ID array |
-| `product_id` | number[] | |
-| `variation_id` | number[] | |
-| `total_quantity` | `{ min, max }` | |
-| `cod` | `{ min, max }` | range tiền COD (đơn vị nhỏ — chia /100 với non-int currency) |
-| `is_duplicated_phone` | boolean | đơn trùng số điện thoại |
-| `is_duplicated_ip` | boolean | đơn trùng IP |
-| `courier_reconciliation_status` | string[] | `not_reconciled`, `reconciled`, … |
-| `customer_reconciliation_status` | string[] | tương tự |
-| `assigning_sale_id` | number[] | nhân viên sale được assign |
-| `assigning_care_id` | number[] | nhân viên CSKH |
-| `delivery_address_id` | number[] | địa chỉ giao hàng (cluster theo addr) |
-| `waybill_number` | string | tracking number partner |
-| `combo_product` | number[] | combo / bundle product ID |
-| `order_source` | string[] | nguồn đơn (`pos`, `web`, `api`, …) |
-| `saved_filter_id` | number | preset filter đã save |
-| `slot_warehouse_id` | number[] | slot/warehouse ID |
+| Key | Value | Label FE | Note |
+|---|---|---|---|
+| `shop_id` | `number` hoặc `"no_shop"` | POS Shop / No Shop | shop_id từ Pancake POS. `"no_shop"` = đơn chưa gán shop. |
+| `partner_id` | `number` hoặc `"no_courier"` | Courier / No Courier | |
+| `service_types` | `string` | Service Type | Lấy từ `getServiceTypes(ffmSettings)` ([utils/tools.js:1385](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/tools.js#L1385)) — `ffmSettings` type=`customer_service_type`. Hoặc `"No Service Type"`. |
+| `tags` | `number[]` (tag ID) hoặc `"no_tag"` | Tag / No tag | Có thêm flow include/exclude qua `is_exclude_tags` flag. |
+| `product_id` / `variation_id` | `number` | Product / Variation | Search + chọn. |
+| `total_quantity` | `number` | Total Quantity | Number trực tiếp, không phải `{min,max}`. |
+| `cod` | `"no_cod"` / `"has_cod"` / `"<op>_<amount>"` | COD | `<op>` ∈ `eq` / `gt_or_eq` / `lt_or_eq` ([utils/advance-filter.js:48-87](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/advance-filter.js#L48-L87)). VD `"gt_or_eq_50000"`. |
+| `is_duplicated_phone` | `true` / `false` | Duplicated Phone / Not Duplicated Phone | boolean (KHÔNG phải string). |
+| `is_duplicated_ip` | `true` / `false` | Duplicated IP / Not Duplicated IP | boolean. |
+| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Courier Reconciliation Status | ([utils/ca/index.js:25-29](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/ca/index.js#L25-L29) + [utils/ca/index.js:41-50](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/ca/index.js#L41-L50)). Value chứa `"not_yet"` → BE filter `exists/must_not exists` ([es_v2/order.ex:888-907](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/services/es_v2/order.ex#L888-L907)). |
+| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Customer Reconciliation Status | ([utils/ca/index.js:31-38](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/ca/index.js#L31-L38)). Cùng logic `not_yet` như courier. |
+| `assigning_sale_id` / `assigning_care_id` | `number` (user ID) hoặc `"no_user"` / `"has_user"` | Assigning Sale|Care | |
+| `delivery_address_id` | `number` | Delivery Address | Cluster theo addr. |
+| `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | No Waybill Number / Matched Waybill Number | **Enum, KHÔNG phải tracking string** ([AdvanceFilterV1.js:939-947](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/AdvanceFilterV1.js#L939-L947)). |
+| `combo_product` | `number` | Combo | Combo / bundle product ID. |
+| `order_source` | `"non_marketplace"` / `"-3"` / `"-4"` / `"-9"` | Non-Marketplace / Shopee / Lazada / TikTok | Marketplace ID string ([utils/tools.js:1506-1510](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/tools.js#L1506-L1510)). |
+| `saved_filter_id` | `number` | Saved Filter | Preset đã save. |
+| `slot_warehouse_id` | `number` | Warehouse | |
+| `pending_reason_id` | `number` hoặc `-1` | Pending Reason | `-1` = "Other reason" ([utils/advance-filter.js:64-73](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/advance-filter.js#L64-L73)). |
+| `cancel_reason_id` | `number` hoặc `-2` | Cancel Reason | `-2` = "Other reason". |
+| `shift` | `"morning"` / `"afternoon"` / `"evening"` | Shift | ([utils/reconciliation.js:1-5](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/reconciliation.js#L1-L5)). |
+| `category_id` | `number` hoặc `"no_category"` | Category | |
+| `business_countries_ids` | `string` (country_code) hoặc `"no_business_countries"` | Countries | |
+
+**Cơ chế exclude:** Mỗi filter ở trên (trừ shop_id/saved_filter_id/…) có option đặc biệt `value: "exclude"` set kèm flag `is_exclude_<key>: true` ở body. BE đảo `must` → `must_not` cho key đó. Truyền cùng filter:
+
+```json
+{ "filter": { "tags": [123], "is_exclude_tags": true } }
+```
 
 **Sort (top-level, ngoài `filter`):**
 
