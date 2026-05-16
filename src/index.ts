@@ -112,15 +112,28 @@ const COMMON_PROPERTIES = {
       "'delivered_at'/'first_assign_sale_at'), '<time_key>:ranges' = " +
       "{ since, until } với ISO 8601 NaiveDateTime " +
       "'YYYY-MM-DDTHH:MM:SS' (KHÔNG dùng unix epoch — BE silently trả " +
-      "[]), '<time_key>:editor_ids' (number[]); advance: shop_id, " +
-      "partner_id, service_types, tags, " +
-      "product_id, variation_id, total_quantity {min,max}, cod {min,max}, " +
-      "is_duplicated_phone, is_duplicated_ip, courier_reconciliation_status, " +
-      "customer_reconciliation_status, assigning_sale_id, assigning_care_id, " +
-      "delivery_address_id, waybill_number, combo_product, order_source, " +
-      "saved_filter_id, slot_warehouse_id. Sort: dùng `extra` field — " +
-      "{ sort_by, sort_direction:'asc'|'desc' }. Xem README §4.1 cho " +
-      "chi tiết.",
+      "[]), '<time_key>:editor_ids' (number[]); advance filter — value " +
+      "PHẢI là enum FE accept, KHÔNG free-form: shop_id (number | " +
+      "'no_shop'); partner_id (number | 'no_courier'); service_types " +
+      "(string từ ffmSettings); tags (number[] | 'no_tag', kèm " +
+      "is_exclude_tags); total_quantity (number); cod ('no_cod' | " +
+      "'has_cod' | '<eq|gt_or_eq|lt_or_eq>_<amount>'); " +
+      "is_duplicated_phone/is_duplicated_ip (boolean true/false); " +
+      "courier_reconciliation_status ('importing'|'courier_reconciling'|" +
+      "'courier_reconciled'|'courier_not_yet_reconciled'); " +
+      "customer_reconciliation_status ('new'|'sent_email'|'reconciled'|" +
+      "'processing'|'completed'|'done'|'customer_not_yet_reconciled'); " +
+      "assigning_sale_id/assigning_care_id (number | 'no_user' | " +
+      "'has_user'); waybill_number ('no_waybill_number' | " +
+      "'matched_waybill_number' — KHÔNG phải tracking string); " +
+      "order_source ('non_marketplace'|'-3' shopee|'-4' lazada|'-9' " +
+      "tiktok); pending_reason_id (number | -1); cancel_reason_id " +
+      "(number | -2); shift ('morning'|'afternoon'|'evening'); " +
+      "category_id (number | 'no_category'); business_countries_ids " +
+      "(country_code | 'no_business_countries'); saved_filter_id, " +
+      "slot_warehouse_id, combo_product, delivery_address_id (number). " +
+      "Exclude: key + is_exclude_<key>: true. Sort: dùng `extra` — " +
+      "{ sort_by, sort_direction:'asc'|'desc' }. Xem README §4.1.",
   },
   page: { type: "number" },
   page_size: { type: "number" },
