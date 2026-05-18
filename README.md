@@ -3,12 +3,12 @@
 MCP server cho **sea-fulfillment** (Pancake FFM).
 
 - **Auth tự động**: chỉ cần cấu hình `username` + `password`. Server tự gọi
-  `POST /api/users/login/password` ([router.ex:35](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/router.ex#L35))
+  `POST /api/users/login/password`
   lấy `access_token` (JWT 30 ngày), cache in-memory theo claim `exp`,
   re-login khi BE trả 401.
-- Gọi API `POST /api/orders/get_orders` ([sea-fulfillment/lib/sea_fulfillment_web/controllers/order_controller.ex:11](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/controllers/order_controller.ex#L11)).
+- Gọi API `POST /api/orders/get_orders`.
 - Normalize order theo logic
-  [sea-fulfillment-web/components/OrderExportExcel.js](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/OrderExportExcel.js)
+
   (`formatData`) — trả ra object phẳng với các field dùng để export Excel.
 - Transport **stdio**, tương thích mọi AI client hỗ trợ MCP: Claude Code,
   Claude Desktop, Cursor, Cline, Continue, Windsurf, Zed, OpenAI Agents
@@ -67,8 +67,7 @@ process, refresh tự động khi sắp hết hạn hoặc khi BE trả 401.
 ### 2.1. Cách auto-login hoạt động
 
 1. Tool call đầu tiên → server `POST {host}/api/users/login/password` với
-   `{username, password}` ([router.ex:35](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/router.ex#L35),
-   [user_controller.ex:272](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/sea_fulfillment_web/controllers/user_controller.ex#L272)).
+   `{username, password}`.
 2. BE trả `{ success: true, access_token: "<jwt>", user: {...} }`. Server
    decode payload JWT (base64) đọc claim `exp`, cache theo key
    `host::username`.
@@ -80,9 +79,7 @@ process, refresh tự động khi sắp hết hạn hoặc khi BE trả 401.
 
 Token claim:
 
-- `exp = iat + 30*24*60*60` → **30 ngày** ([user_action.ex:283-298](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/user_action.ex#L283-L298)
-  → [tools.ex:968](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/tools.ex#L968)
-  `exp_30_days = cur_iat + 30*24*60*60`).
+- `exp = iat + 30*24*60*60` → **30 ngày**.
 - `app_id` BE auto-detect theo hostname → login PHẢI đúng host của tenant
   mình (`UserAction.handle_app_id`).
 
@@ -104,9 +101,7 @@ echo 'eyJhbGciOiJI…' | cut -d. -f2 | base64 -d 2>/dev/null | jq .exp
 ### 2.2. `country_code` (tham số tool, không phải env)
 
 Phone-code (string) — **BẮT BUỘC truyền mỗi tool call**, không có
-default env. KHÔNG dùng ISO 2 chữ. Đồng bộ
-[sea-fulfillment lib/app/constant.ex:93-99](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L93-L99)
-(`supported_countries` — có currency map):
+default env. KHÔNG dùng ISO 2 chữ. Các giá trị BE accept (`supported_countries` — có currency map):
 
 | `country_code` | Country | Short | Currency |
 |---|---|---|---|
@@ -116,21 +111,18 @@ default env. KHÔNG dùng ISO 2 chữ. Đồng bộ
 | `"62"` | Indonesia | ID | IDR |
 | `"65"` | Singapore | SG | SGD |
 
-Ngoài ra BE còn accept (theo
-[`supported_country_codes`](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L70)):
+Ngoài ra BE còn accept thêm:
 
 | `country_code` | Country | Note |
 |---|---|---|
 | `"856"` | Laos | BE accept nhưng MCP không có currency map → tiền fallback chia `/100` (có thể sai với LAK). |
 
 > KHÔNG dùng `"VN"`, `"84"`, `"VND"` — Vietnam KHÔNG nằm trong supported
-> countries (CLAUDE.md §7).
+> countries.
 
 ### 2.3. `host`
 
-Base URL gồm scheme. Đồng bộ
-[sea-fulfillment lib/app/constant.ex:72-83](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/constant.ex#L72-L83)
-(`supported_hosts`):
+Base URL gồm scheme. Các host BE accept (`supported_hosts`):
 
 | Host (`SEA_FULFILLMENT_HOST`) | `app_id` | Prefix | Note |
 |---|---|---|---|
@@ -394,11 +386,10 @@ Pass-through tới BE — trả raw response (`data`, `page`, `total_pages`, …
 
 #### 4.1. `filter` chi tiết
 
-Reverse-engineer từ [sea-fulfillment-web pages/order/index.js:140](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/pages/order/index.js#L140)
-(`getOrders({ filter, sort_by, sort_direction })`) + các filter components ở
-[index.js:564-568](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/pages/order/index.js#L564-L568)
-(`OrderSortPopover`, `OrderFilterPrintedCount`, `OrderFilterProcessingCount`,
-`RangePicker`, `AdvanceFilterV1`).
+Body của request `POST /api/orders/get_orders` (tham khảo cách FE
+sea-fulfillment-web build params: `getOrders({ filter, sort_by, sort_direction })`
++ các filter component sort popover / printed-count / processing-count /
+range picker / advance filter).
 
 **Pagination + search:**
 
@@ -407,7 +398,7 @@ Reverse-engineer từ [sea-fulfillment-web pages/order/index.js:140](https://git
 | `page` | number | 1-based |
 | `page_size` | number | default 30 ở FE table |
 | `keyword` | string[] | full-text search (display_id, phone, name, …) |
-| `order_ids` | number[] | filter list ID cụ thể (dùng cho export flow [OrderExportExcel.js:94](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/OrderExportExcel.js#L94)) |
+| `order_ids` | number[] | filter list ID cụ thể (dùng cho export flow) |
 
 **Status / counter:**
 
@@ -418,7 +409,7 @@ Reverse-engineer từ [sea-fulfillment-web pages/order/index.js:140](https://git
 | `printed_count` | string/number | `OrderFilterPrintedCount` — vd `0` để lọc đơn chưa in |
 | `processing_count` | string/number | `OrderFilterProcessingCount` — count đơn đang xử lý |
 
-**Date range (via [RangePicker.js:247-254](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/RangePicker.js#L247-L254)) — dynamic key theo `time_key`:**
+**Date range (via) — dynamic key theo `time_key`:**
 
 | Key | Type | Note |
 |---|---|---|
@@ -426,31 +417,31 @@ Reverse-engineer từ [sea-fulfillment-web pages/order/index.js:140](https://git
 | `<time_key>:ranges` | `{ since, until }` | **ISO 8601 NaiveDateTime string** (`"YYYY-MM-DDTHH:MM:SS"`, BE parse qua `Tools.parse_ranges` → `NaiveDateTime.from_iso8601!`). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch hay timezone offset — BE sẽ silently trả mảng rỗng. |
 | `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
 
-**Advance filter** — list option lấy thẳng từ FE `AdvanceFilterV1` ([components/AdvanceFilterV1.js:1007-1041](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/AdvanceFilterV1.js#L1007-L1041)). Mỗi key BE chỉ accept đúng các enum dưới đây — KHÔNG phải free-form string/array tùy ý.
+**Advance filter** — list option lấy thẳng từ FE `AdvanceFilterV1`. Mỗi key BE chỉ accept đúng các enum dưới đây — KHÔNG phải free-form string/array tùy ý.
 
 | Key | Value | Label FE | Note |
 |---|---|---|---|
 | `shop_id` | `number` hoặc `"no_shop"` | POS Shop / No Shop | shop_id từ Pancake POS. `"no_shop"` = đơn chưa gán shop. |
 | `partner_id` | `number` hoặc `"no_courier"` | Courier / No Courier | |
-| `service_types` | `string` | Service Type | Lấy từ `getServiceTypes(ffmSettings)` ([utils/tools.js:1385](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/tools.js#L1385)) — `ffmSettings` type=`customer_service_type`. Hoặc `"No Service Type"`. |
+| `service_types` | `string` | Service Type | Lấy từ `getServiceTypes(ffmSettings)` — `ffmSettings` type=`customer_service_type`. Hoặc `"No Service Type"`. |
 | `tags` | `number[]` (tag ID) hoặc `"no_tag"` | Tag / No tag | Có thêm flow include/exclude qua `is_exclude_tags` flag. |
 | `product_id` / `variation_id` | `number` | Product / Variation | Search + chọn. |
 | `total_quantity` | `number` | Total Quantity | Number trực tiếp, không phải `{min,max}`. |
-| `cod` | `"no_cod"` / `"has_cod"` / `"<op>_<amount>"` | COD | `<op>` ∈ `eq` / `gt_or_eq` / `lt_or_eq` ([utils/advance-filter.js:48-87](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/advance-filter.js#L48-L87)). VD `"gt_or_eq_50000"`. |
+| `cod` | `"no_cod"` / `"has_cod"` / `"<op>_<amount>"` | COD | `<op>` ∈ `eq` / `gt_or_eq` / `lt_or_eq`. VD `"gt_or_eq_50000"`. |
 | `is_duplicated_phone` | `true` / `false` | Duplicated Phone / Not Duplicated Phone | boolean (KHÔNG phải string). |
 | `is_duplicated_ip` | `true` / `false` | Duplicated IP / Not Duplicated IP | boolean. |
-| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Courier Reconciliation Status | ([utils/ca/index.js:25-29](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/ca/index.js#L25-L29) + [utils/ca/index.js:41-50](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/ca/index.js#L41-L50)). Value chứa `"not_yet"` → BE filter `exists/must_not exists` ([es_v2/order.ex:888-907](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/services/es_v2/order.ex#L888-L907)). |
-| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Customer Reconciliation Status | ([utils/ca/index.js:31-38](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/ca/index.js#L31-L38)). Cùng logic `not_yet` như courier. |
+| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Courier Reconciliation Status | Value chứa `"not_yet"` → BE đảo thành `exists / must_not exists` query (lọc đơn chưa từng có status nào). |
+| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Customer Reconciliation Status | Cùng logic `not_yet` như courier. |
 | `assigning_sale_id` / `assigning_care_id` | `number` (user ID) hoặc `"no_user"` / `"has_user"` | Assigning Sale|Care | |
 | `delivery_address_id` | `number` | Delivery Address | Cluster theo addr. |
-| `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | No Waybill Number / Matched Waybill Number | **Enum, KHÔNG phải tracking string** ([AdvanceFilterV1.js:939-947](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/components/AdvanceFilterV1.js#L939-L947)). |
+| `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | No Waybill Number / Matched Waybill Number | **Enum, KHÔNG phải tracking string**. |
 | `combo_product` | `number` | Combo | Combo / bundle product ID. |
-| `order_source` | `"non_marketplace"` / `"-3"` / `"-4"` / `"-9"` | Non-Marketplace / Shopee / Lazada / TikTok | Marketplace ID string ([utils/tools.js:1506-1510](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/tools.js#L1506-L1510)). |
+| `order_source` | `"non_marketplace"` / `"-3"` / `"-4"` / `"-9"` | Non-Marketplace / Shopee / Lazada / TikTok | Marketplace ID string. |
 | `saved_filter_id` | `number` | Saved Filter | Preset đã save. |
 | `slot_warehouse_id` | `number` | Warehouse | |
-| `pending_reason_id` | `number` hoặc `-1` | Pending Reason | `-1` = "Other reason" ([utils/advance-filter.js:64-73](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/advance-filter.js#L64-L73)). |
+| `pending_reason_id` | `number` hoặc `-1` | Pending Reason | `-1` = "Other reason". |
 | `cancel_reason_id` | `number` hoặc `-2` | Cancel Reason | `-2` = "Other reason". |
-| `shift` | `"morning"` / `"afternoon"` / `"evening"` | Shift | ([utils/reconciliation.js:1-5](https://github.com/pancake-vn/sea-fulfillment-web/blob/develop/utils/reconciliation.js#L1-L5)). |
+| `shift` | `"morning"` / `"afternoon"` / `"evening"` | Shift | |
 | `category_id` | `number` hoặc `"no_category"` | Category | |
 | `business_countries_ids` | `string` (country_code) hoặc `"no_business_countries"` | Countries | |
 
@@ -475,9 +466,7 @@ nhận `filter` ở top-level):
 ```
 
 **Lưu ý:** đây là filter keys FE đang dùng — không guarantee BE accept hết
-hoặc chưa accept thêm key khác. Khi nghi ngờ, kiểm tra
-[Services.EsV2.Order.get_orders](https://github.com/pancake-vn/sea-fulfillment/blob/develop/lib/app/services/es_v2/order.ex)
-(BE).
+hoặc chưa accept thêm key khác.
 
 ### `get_orders_normalized`
 

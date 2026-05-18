@@ -92,7 +92,7 @@ const COMMON_PROPERTIES = {
     description:
       "Base URL (gồm scheme). BẮT BUỘC — không default. " +
       "Nếu env SEA_FULFILLMENT_HOST chưa set thì phải truyền tham số này. " +
-      "Các host BE supported (lib/app/constant.ex:72): " +
+      "Các host BE supported: " +
       "https://fulfillment.pancake.vn (app_id=99,PFFM), " +
       "https://g-solution.vn (1,GIP), https://afgwarehouse.net (2,AFG), " +
       "https://app.mspeedyexpress.com (3,MSX), https://lynexpress.co (4,LYN), " +
@@ -102,7 +102,7 @@ const COMMON_PROPERTIES = {
   filter: {
     type: "object",
     description:
-      "Filter object — keys phổ biến (FE sea-fulfillment-web dùng): " +
+      "Filter object — keys phổ biến: " +
       "pagination: page, page_size; search: keyword (string[]), order_ids " +
       "(number[]); status: statuses (string[] — new/confirmed/printed/" +
       "packing/pending/shipped/delivered/returning/returned/cancel), " +
@@ -172,7 +172,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "get_orders_normalized",
       description:
         "Gọi get_orders với load_full=true rồi normalize từng order theo " +
-        "OrderExportExcel.formatData (sea-fulfillment-web). Trả mảng order " +
+        "logic export Excel của FE order list. Trả mảng order " +
         "phẳng với các field: full_address, weight, total_quantity, " +
         "tracking_number, partner_name, product_name, remarks, " +
         "customer_name, status (text), shop, send_to_partner_at, " +
