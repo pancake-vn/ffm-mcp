@@ -159,7 +159,16 @@ chưa đủ). Thấy icon 🔌 dưới ô chat với `ffm` ✓ là xong.
 > `/Users/me/.nvm/versions/node/v20.15.0/bin/npx`) và thêm key
 > `"PATH"` vào `env` trỏ tới thư mục `bin` của Node.
 
-### 3.3. Cursor
+### 3.3. Claude Cowork
+
+Cowork dùng **chung danh sách MCP server với Claude Desktop**. Sau khi đã
+cắm `ffm` theo §3.2, bạn dùng được ngay trong cả cuộc trò chuyện thường lẫn
+chế độ Cowork — **không cần thiết lập lại**.
+
+> Nếu Cowork không thấy server: kiểm tra đã lưu config §3.2 và **thoát hẳn**
+> Claude Desktop (`Cmd+Q`) rồi mở lại. Cowork đọc config lúc khởi động app.
+
+### 3.4. Cursor
 
 **Settings → MCP → Add new MCP server**, hoặc sửa `~/.cursor/mcp.json`
 (global) / `<project>/.cursor/mcp.json`:
@@ -182,7 +191,7 @@ chưa đủ). Thấy icon 🔌 dưới ô chat với `ffm` ✓ là xong.
 
 Reload Cursor (Cmd+Shift+P → `Developer: Reload Window`).
 
-### 3.4. Client khác (Cline, Continue, Windsurf, Zed, OpenAI Agents SDK, …)
+### 3.5. Client khác (Cline, Continue, Windsurf, Zed, OpenAI Agents SDK, …)
 
 Mọi MCP client hỗ trợ **stdio transport** đều dùng chung pattern:
 
@@ -209,7 +218,7 @@ npx @modelcontextprotocol/inspector \
   npx -y github:pancake-vn/ffm-mcp
 ```
 
-### 3.5. (Nâng cao) Cài local từ source
+### 3.6. (Nâng cao) Cài local từ source
 
 Chỉ cần khi muốn chạy offline / chỉnh code:
 
