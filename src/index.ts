@@ -150,10 +150,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_orders",
       description:
-        "Gọi POST /api/orders/get_orders (sea-fulfillment) và trả raw " +
-        "response. Auth tự động: server gọi POST /api/users/login/password " +
-        "bằng SEA_FULFILLMENT_USERNAME + SEA_FULFILLMENT_PASSWORD, cache " +
-        "JWT 30 ngày, re-login khi 401.",
+        "Lấy đơn hàng sea-fulfillment (FFM) — trả RAW response BE " +
+        "(POST /api/orders/get_orders). Dùng khi cần dữ liệu thô hoặc field " +
+        "BE chưa normalize. Nếu user muốn LIỆT KÊ / XUẤT BẢNG / EXCEL đơn " +
+        "thì ưu tiên get_orders_normalized. Auth tự động: server login bằng " +
+        "SEA_FULFILLMENT_USERNAME + SEA_FULFILLMENT_PASSWORD, cache JWT 30 " +
+        "ngày, re-login khi 401. BẮT BUỘC truyền country_code (phone-code: " +
+        "63=PH, 66=TH, 60=MY, 62=ID, 65=SG).",
       inputSchema: {
         type: "object",
         required: ["country_code"],
@@ -171,14 +174,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_orders_normalized",
       description:
-        "Gọi get_orders với load_full=true rồi normalize từng order theo " +
-        "logic export Excel của FE order list. Trả mảng order " +
-        "phẳng với các field: full_address, weight, total_quantity, " +
-        "tracking_number, partner_name, product_name, remarks, " +
-        "customer_name, status (text), shop, send_to_partner_at, " +
-        "shipped_at, completed_at, courier_*/customer_* reconciliation, " +
-        "tags, … Bật paginate=true để loop hết. Auth tự động (xem " +
-        "get_orders).",
+        "Lấy đơn hàng FFM đã NORMALIZE — dùng khi user muốn liệt kê, xuất " +
+        "bảng, hoặc xuất Excel đơn hàng. Tự bật load_full=true, gọi BE rồi " +
+        "normalize theo logic export Excel của FE. Trả mảng order phẳng: " +
+        "display_id, status (text), customer_name, phone_number, " +
+        "full_address, total_quantity, weight, tracking_number, " +
+        "partner_name, cod, total_price (đã chia /100 theo currency), shop, " +
+        "send_to_partner_at, shipped_at, completed_at, " +
+        "courier_*/customer_* reconciliation, tags, service_types, … Bật " +
+        "paginate=true để loop hết các trang. Auth tự động + BẮT BUỘC " +
+        "country_code (xem get_orders).",
       inputSchema: {
         type: "object",
         required: ["country_code"],

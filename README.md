@@ -1,206 +1,136 @@
 # ffm-mcp
 
-MCP server cho **sea-fulfillment** (Pancake FFM).
+MCP server cho **sea-fulfillment** (Pancake FFM). Cắm vào trợ lý AI (Claude
+Desktop, Claude Code, Cursor, …) để hỏi và lấy dữ liệu đơn hàng bằng lời
+nói bình thường — không cần viết code.
 
-- **Auth tự động**: chỉ cần cấu hình `username` + `password`. Server tự gọi
-  `POST /api/users/login/password`
-  lấy `access_token` (JWT 30 ngày), cache in-memory theo claim `exp`,
-  re-login khi BE trả 401.
-- Gọi API `POST /api/orders/get_orders`.
-- Normalize order theo logic
+Server tự đăng nhập bằng `username` + `password`, gọi API
+`POST /api/orders/get_orders`, và **normalize** order theo đúng các trường
+FE dùng để export Excel (`OrderExportExcel.formatData`) — trả ra object
+phẳng dễ đọc, dễ xuất bảng.
 
-  (`formatData`) — trả ra object phẳng với các field dùng để export Excel.
-- Transport **stdio**, tương thích mọi AI client hỗ trợ MCP: Claude Code,
-  Claude Desktop, Cursor, Cline, Continue, Windsurf, Zed, OpenAI Agents
-  SDK, …
-
----
-
-## 1. Cài đặt
-
-```bash
-git clone <repo-url> ffm-mcp
-cd ffm-mcp
-npm install
-npm run build
-```
-
-Yêu cầu Node 18+ (cần global `fetch`).
-
-Sau bước này có binary chạy được:
-
-```bash
-node /absolute/path/to/ffm-mcp/dist/index.js
-# → [ffm-mcp] ready on stdio
-```
-
-Hoặc symlink global cho gọn:
-
-```bash
-npm link            # tạo bin `ffm-mcp` trên PATH
-ffm-mcp             # chạy server
-```
+> **Đi nhanh:** [§1 Chuẩn bị](#1-chuẩn-bị) → [§2 Thông tin đăng
+> nhập](#2-thông-tin-đăng-nhập) → [§3 Cắm vào AI client](#3-cắm-vào-ai-client)
+> → [§4 Thử kết nối](#4-thử-kết-nối). Mục [§6 Thư viện prompt](#6-thư-viện-prompt)
+> có sẵn câu lệnh copy-paste.
 
 ---
 
-## 2. Cấu hình auth
+## 1. Chuẩn bị
 
-Server tự quản lý `access_token` — bạn **chỉ cần cấu hình
-`username` + `password`**. Pancake JWT (30 ngày) được fetch + cache trong
-process, refresh tự động khi sắp hết hạn hoặc khi BE trả 401.
+Cần có sẵn:
 
-| Biến / tham số | Mặc định | Note |
+- **Node.js 18+** trên máy (kiểm tra: `node -v`). Đây là yêu cầu duy nhất —
+  không cần clone repo hay build tay (xem §3).
+- **Một tài khoản sea-fulfillment** (username/email/SĐT + password) có quyền
+  xem đơn hàng.
+- Biết **host** của tenant mình và **country_code** (phone-code) đang vận
+  hành — xem bảng ở [§2.2](#22-host--tenant) và [§2.3](#23-country_code).
+
+---
+
+## 2. Thông tin đăng nhập
+
+Server tự quản lý `access_token` — bạn **chỉ cần cấu hình 3 biến môi
+trường**. Pancake JWT (30 ngày) được fetch + cache trong process, tự refresh
+khi sắp hết hạn hoặc khi BE trả 401.
+
+| Biến môi trường | Bắt buộc | Giá trị |
 |---|---|---|
-| `SEA_FULFILLMENT_USERNAME` | _(bắt buộc)_ | Username, email, hoặc số điện thoại. Chỉ đọc từ env — không phải param của tool. |
-| `SEA_FULFILLMENT_PASSWORD` | _(bắt buộc)_ | Plain password. Chỉ đọc từ env — không phải param của tool. |
-| `SEA_FULFILLMENT_HOST` | _(bắt buộc)_ | Base URL BE — **KHÔNG có default**. 10 supported_hosts khác tenant (xem §2.3), default âm thầm dễ gửi credentials sai tenant. Override bằng tham số `host` mỗi tool call. |
+| `SEA_FULFILLMENT_USERNAME` | ✅ | Username, email, hoặc số điện thoại đăng nhập. |
+| `SEA_FULFILLMENT_PASSWORD` | ✅ | Mật khẩu (plain text). |
+| `SEA_FULFILLMENT_HOST` | ✅ | Base URL BE của tenant — vd `https://fulfillment.pancake.vn`. Không có default. Xem [§2.2](#22-host--tenant). |
 
-> `country_code` **KHÔNG nằm ở env** — bắt buộc truyền mỗi tool call. Lý
-> do: 1 user có thể quản nhiều country, default env một country dễ dẫn
-> tới gọi nhầm. Bảng phone-code: xem §2.2.
+> `country_code` **KHÔNG nằm ở env** — truyền theo từng câu hỏi (mỗi tool
+> call). Lý do: 1 tài khoản có thể quản nhiều quốc gia; để default dễ hỏi
+> nhầm nước. Thường bạn chỉ cần nói "đơn ở Philippines" và AI tự điền
+> `country_code=63`.
 
-> ⚠️ **Bảo mật:** password được lưu trong env / config file của MCP client
-> (vd `~/.claude.json`, `claude_desktop_config.json`). KHÔNG commit file
-> này vào git public. Cân nhắc tạo user riêng với quyền tối thiểu cho
-> automation thay vì dùng tài khoản admin chính.
+> ⚠️ **Bảo mật:** mật khẩu được lưu trong file cấu hình của AI client (vd
+> `~/.claude.json`, `claude_desktop_config.json`). KHÔNG commit file này lên
+> git public, cẩn thận khi share màn hình / sync iCloud. Nên tạo user riêng
+> quyền tối thiểu cho automation thay vì dùng tài khoản admin chính.
 
 ### 2.1. Cách auto-login hoạt động
 
 1. Tool call đầu tiên → server `POST {host}/api/users/login/password` với
    `{username, password}`.
 2. BE trả `{ success: true, access_token: "<jwt>", user: {...} }`. Server
-   decode payload JWT (base64) đọc claim `exp`, cache theo key
+   decode payload JWT đọc claim `exp` (= `iat + 30 ngày`), cache theo key
    `host::username`.
-3. Tool calls tiếp theo dùng cache. Refresh trước hạn 5 phút để tránh
-   race.
-4. Nếu BE trả 401 (hoặc 200 + `success:false` với message chứa
-   `auth/token/login/unauthor`) → invalidate cache + force re-login + retry
-   1 lần.
+3. Các call sau dùng cache, refresh trước hạn 5 phút để tránh race.
+4. Nếu BE trả 401 → invalidate cache + force re-login + retry 1 lần.
 
-Token claim:
+Cache là in-memory per-process: restart client → mất cache, login lại lần kế.
 
-- `exp = iat + 30*24*60*60` → **30 ngày**.
-- `app_id` BE auto-detect theo hostname → login PHẢI đúng host của tenant
-  mình (`UserAction.handle_app_id`).
+`app_id` được BE tự nhận diện theo hostname trong request — bạn **không cần**
+truyền `app_id`, chỉ cần login đúng host của tenant.
 
-> Cache là in-memory per-process. Restart MCP server (vd reload client) →
-> mất cache, sẽ login lại lần kế.
+### 2.2. `host` / tenant
 
-Debug manual:
+Base URL gồm scheme. Các host BE accept:
 
-```bash
-curl -X POST https://fulfillment.pancake.vn/api/users/login/password \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"your-email@example.com","password":"YOUR_PASSWORD"}'
-# → { "success": true, "access_token": "eyJhbGciOiJIUzI1NiJ9.…", "user": {...} }
-
-# Decode exp của JWT để verify 30 ngày:
-echo 'eyJhbGciOiJI…' | cut -d. -f2 | base64 -d 2>/dev/null | jq .exp
-```
-
-### 2.2. `country_code` (tham số tool, không phải env)
-
-Phone-code (string) — **BẮT BUỘC truyền mỗi tool call**, không có
-default env. KHÔNG dùng ISO 2 chữ. Các giá trị BE accept (`supported_countries` — có currency map):
-
-| `country_code` | Country | Short | Currency |
-|---|---|---|---|
-| `"63"` | Philippines | PH | PHP |
-| `"66"` | Thailand | TH | THB |
-| `"60"` | Malaysia | MY | MYR |
-| `"62"` | Indonesia | ID | IDR |
-| `"65"` | Singapore | SG | SGD |
-
-Ngoài ra BE còn accept thêm:
-
-| `country_code` | Country | Note |
+| `SEA_FULFILLMENT_HOST` | `app_id` | Tenant |
 |---|---|---|
-| `"856"` | Laos | BE accept nhưng MCP không có currency map → tiền fallback chia `/100` (có thể sai với LAK). |
+| `https://fulfillment.pancake.vn` | 99 | Pancake FFM (production) |
+| `https://g-solution.vn` | 1 | G-Solution |
+| `https://afgwarehouse.net` | 2 | AFG Warehouse |
+| `https://app.mspeedyexpress.com` | 3 | M-Speedy Express |
+| `https://lynexpress.co` | 4 | Lyn Express |
+| `https://buber.pancake.vn` | 5 | Buber |
+| `https://admin.ifgfulfillmentglobal.com` | 6 | IFG Fulfillment Global |
+| `https://bigate.co` | 9 | Bigate |
 
-> KHÔNG dùng `"VN"`, `"84"`, `"VND"` — Vietnam KHÔNG nằm trong supported
-> countries.
+> Login phải đúng host của tenant mình; login cross-host sẽ trả
+> `Wrong username or password`.
 
-### 2.3. `host`
+### 2.3. `country_code`
 
-Base URL gồm scheme. Các host BE accept (`supported_hosts`):
+Phone-code (string) — truyền theo từng câu hỏi, **không dùng ISO 2 chữ**:
 
-| Host (`SEA_FULFILLMENT_HOST`) | `app_id` | Prefix | Note |
-|---|---|---|---|
-| `https://fulfillment.pancake.vn` | 99 | PFFM | Production Pancake FFM |
-| `https://g-solution.vn` | 1 | GIP | G-Solution |
-| `https://afgwarehouse.net` | 2 | AFG | AFG Warehouse |
-| `https://app.mspeedyexpress.com` | 3 | MSX | M-Speedy Express |
-| `https://lynexpress.co` | 4 | LYN | Lyn Express |
-| `https://buber.pancake.vn` | 5 | BUBER | Buber |
-| `https://admin.ifgfulfillmentglobal.com` | 6 | IFG | IFG Fulfillment Global |
-| `https://bigate.co` | 9 | BIG | Bigate |
+| `country_code` | Quốc gia | Tiền tệ |
+|---|---|---|
+| `"63"` | Philippines (PH) | PHP |
+| `"66"` | Thailand (TH) | THB |
+| `"60"` | Malaysia (MY) | MYR |
+| `"62"` | Indonesia (ID) | IDR |
+| `"65"` | Singapore (SG) | SGD |
 
-> `app_id` được BE auto-detect từ hostname trong request — bạn không cần
-> truyền `app_id` thủ công. Login phải đúng host của tenant mình; login
-> cross-host sẽ trả `Wrong username or password`.
+BE còn accept `"856"` (Laos) nhưng MCP chưa có currency map → tiền fallback
+chia `/100`, có thể sai với LAK. KHÔNG dùng `"VN"` / `"84"` / `"VND"`.
 
 ---
 
 ## 3. Cắm vào AI client
 
-Đường dẫn ví dụ giả định bạn build ở `/Users/me/ffm-mcp` — đổi tuyệt đối
-phù hợp máy bạn. Mọi client đều cùng pattern: chạy `node dist/index.js`,
-truyền env vars.
+**Cách nhanh nhất — chạy thẳng từ GitHub, không cần clone/build.** `npx` tự
+tải repo và build lần đầu. Chỉ cần Node 18+ (xem §1).
 
-### 3.1. Claude Code (Anthropic CLI)
+### 3.1. Claude Code (CLI)
 
-**Cách 1 — CLI (recommend):**
+Chạy 1 lệnh, thay 3 giá trị in hoa bằng thông tin của bạn:
 
 ```bash
-# Scope user (mọi project):
-claude mcp add ffm \
-  --scope user \
+claude mcp add ffm --scope user \
   --env SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
   --env SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
   --env SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
-  -- node /absolute/path/to/ffm-mcp/dist/index.js
-
-# Hoặc scope project (chỉ repo hiện tại, commit kèm code được):
-claude mcp add ffm \
-  --scope project \
-  --env SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
-  --env SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
-  --env SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
-  -- node /absolute/path/to/ffm-mcp/dist/index.js
+  -- npx -y github:pancake-vn/ffm-mcp
 ```
 
-Verify:
+Kiểm tra:
 
 ```bash
 claude mcp list
-# → ffm: node /absolute/path/to/ffm-mcp/dist/index.js  ✓ Connected
+# → ffm: npx -y github:pancake-vn/ffm-mcp  ✓ Connected
 ```
 
-**Cách 2 — sửa tay file config** (`~/.claude.json` hoặc project
-`.claude.json`):
+Trong session, gõ `/mcp` để xem trạng thái. Tool xuất hiện là
+`mcp__ffm__get_orders` và `mcp__ffm__get_orders_normalized`.
 
-```json
-{
-  "mcpServers": {
-    "ffm": {
-      "command": "node",
-      "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
-      "env": {
-        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
-        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
-      }
-    }
-  }
-}
-```
+### 3.2. Claude Desktop (macOS / Windows)
 
-Trong session Claude Code, gõ `/mcp` để xem trạng thái. Tool sẽ xuất hiện
-là `mcp__ffm__get_orders` và `mcp__ffm__get_orders_normalized`.
-
-### 3.2. Claude Desktop (claude.ai macOS / Windows)
-
-File config:
+Mở **Settings → Developer → Edit Config** (hoặc sửa file trực tiếp):
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
@@ -208,8 +138,8 @@ File config:
 {
   "mcpServers": {
     "ffm": {
-      "command": "node",
-      "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "github:pancake-vn/ffm-mcp"],
       "env": {
         "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
         "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
@@ -220,19 +150,26 @@ File config:
 }
 ```
 
-Restart Claude Desktop → icon 🔌 dưới chat box → thấy `ffm` ✓.
+Lưu xong **thoát hẳn** Claude Desktop rồi mở lại (macOS nhấn `Cmd+Q` — bấm X
+chưa đủ). Thấy icon 🔌 dưới ô chat với `ffm` ✓ là xong.
+
+> 💡 **Gotcha macOS:** app GUI không kế thừa `PATH` của shell, nên `npx` cài
+> qua `nvm` đôi khi không tìm thấy. Nếu báo lỗi "command not found", thay
+> `"command": "npx"` bằng đường dẫn tuyệt đối (chạy `which npx` để lấy, vd
+> `/Users/me/.nvm/versions/node/v20.15.0/bin/npx`) và thêm key
+> `"PATH"` vào `env` trỏ tới thư mục `bin` của Node.
 
 ### 3.3. Cursor
 
-Mở **Settings → MCP → Add new MCP server**, hoặc edit file:
-`~/.cursor/mcp.json` (global) / `<project>/.cursor/mcp.json` (per project).
+**Settings → MCP → Add new MCP server**, hoặc sửa `~/.cursor/mcp.json`
+(global) / `<project>/.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "ffm": {
-      "command": "node",
-      "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "github:pancake-vn/ffm-mcp"],
       "env": {
         "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
         "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
@@ -243,114 +180,24 @@ Mở **Settings → MCP → Add new MCP server**, hoặc edit file:
 }
 ```
 
-Restart Cursor (Cmd+Shift+P → `Developer: Reload Window`).
+Reload Cursor (Cmd+Shift+P → `Developer: Reload Window`).
 
-### 3.4. Cline (VS Code extension)
+### 3.4. Client khác (Cline, Continue, Windsurf, Zed, OpenAI Agents SDK, …)
 
-Cline UI → **MCP Servers → Edit Configuration**, hoặc edit:
-`~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-(macOS; Linux/Windows tương tự).
-
-```json
-{
-  "mcpServers": {
-    "ffm": {
-      "command": "node",
-      "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
-      "env": {
-        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
-        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
-      },
-      "disabled": false,
-      "autoApprove": []
-    }
-  }
-}
-```
-
-### 3.5. Continue (VS Code / JetBrains)
-
-Edit `~/.continue/config.json` (hoặc `.continue/config.json` per project):
-
-```json
-{
-  "experimental": {
-    "modelContextProtocolServers": [
-      {
-        "transport": {
-          "type": "stdio",
-          "command": "node",
-          "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
-          "env": {
-            "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
-            "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-            "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
-          }
-        }
-      }
-    ]
-  }
-}
-```
-
-### 3.6. Windsurf (Codeium)
-
-`~/.codeium/windsurf/mcp_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "ffm": {
-      "command": "node",
-      "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
-      "env": {
-        "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
-        "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-        "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
-      }
-    }
-  }
-}
-```
-
-### 3.7. Zed
-
-`~/.config/zed/settings.json`:
-
-```json
-{
-  "context_servers": {
-    "ffm": {
-      "command": {
-        "path": "node",
-        "args": ["/absolute/path/to/ffm-mcp/dist/index.js"],
-        "env": {
-          "SEA_FULFILLMENT_USERNAME": "YOUR_USERNAME_OR_EMAIL",
-          "SEA_FULFILLMENT_PASSWORD": "YOUR_PASSWORD",
-          "SEA_FULFILLMENT_HOST": "https://fulfillment.pancake.vn"
-        }
-      },
-      "settings": {}
-    }
-  }
-}
-```
-
-### 3.8. Client khác (OpenAI Agents SDK, custom MCP host)
-
-Mọi MCP client hỗ trợ **stdio transport** đều dùng được. Pattern chung:
+Mọi MCP client hỗ trợ **stdio transport** đều dùng chung pattern:
 
 ```
-command: node
-args:    ["/absolute/path/to/ffm-mcp/dist/index.js"]
+command: npx
+args:    ["-y", "github:pancake-vn/ffm-mcp"]
 env:
-  SEA_FULFILLMENT_USERNAME      (bắt buộc)
-  SEA_FULFILLMENT_PASSWORD      (bắt buộc)
-  SEA_FULFILLMENT_HOST          (bắt buộc, vd https://fulfillment.pancake.vn)
-
-`country_code` truyền theo từng tool call (xem §2.2), không nằm trong env.
+  SEA_FULFILLMENT_USERNAME   (bắt buộc)
+  SEA_FULFILLMENT_PASSWORD   (bắt buộc)
+  SEA_FULFILLMENT_HOST       (bắt buộc, vd https://fulfillment.pancake.vn)
 ```
+
+Một vài client lồng config khác cấu trúc (Zed dùng `context_servers` +
+`command.path`; Continue dùng `experimental.modelContextProtocolServers`) —
+chỉ cần map `command` / `args` / `env` đúng vị trí.
 
 Debug nhanh bằng MCP Inspector:
 
@@ -359,37 +206,128 @@ npx @modelcontextprotocol/inspector \
   -e SEA_FULFILLMENT_USERNAME=YOUR_USERNAME_OR_EMAIL \
   -e SEA_FULFILLMENT_PASSWORD=YOUR_PASSWORD \
   -e SEA_FULFILLMENT_HOST=https://fulfillment.pancake.vn \
-  node /absolute/path/to/ffm-mcp/dist/index.js
+  npx -y github:pancake-vn/ffm-mcp
+```
+
+### 3.5. (Nâng cao) Cài local từ source
+
+Chỉ cần khi muốn chạy offline / chỉnh code:
+
+```bash
+git clone https://github.com/pancake-vn/ffm-mcp.git
+cd ffm-mcp
+npm install && npm run build
+```
+
+Rồi thay `"command": "npx", "args": ["-y", "github:pancake-vn/ffm-mcp"]`
+bằng `"command": "node", "args": ["/absolute/path/to/ffm-mcp/dist/index.js"]`
+trong mọi config ở trên.
+
+---
+
+## 4. Thử kết nối
+
+Mở một cuộc trò chuyện mới và gõ thử:
+
+> Liệt kê 5 đơn hàng gần nhất ở Philippines.
+
+> Hôm nay có bao nhiêu đơn ở trạng thái shipped (PH)?
+
+Lần đầu gọi tool, client sẽ hỏi "có cho phép gọi tool này không?" → chọn
+**Allow**. Nếu danh sách đơn hoặc con số hiện ra là kết nối đã thành công —
+từ đây bạn hỏi và ra lệnh bằng lời nói bình thường.
+
+---
+
+## 5. Project Instruction mẫu
+
+Trong Claude, **Project** là nơi gom các cuộc trò chuyện cùng chủ đề và đặt
+sẵn một bộ hướng dẫn chung. Đặt hướng dẫn tốt giúp AI trả lời sát cách vận
+hành của bạn, không phải nhắc lại mỗi lần. Tạo Project mới, mở phần
+**Instructions** và dán mẫu dưới đây (thay phần trong ngoặc vuông):
+
+```markdown
+# Hướng dẫn cho trợ lý vận hành fulfillment
+
+## Bối cảnh
+- Tenant / host: [vd fulfillment.pancake.vn]
+- Quốc gia vận hành: [vd Philippines — country_code 63]. Mặc định dùng nước
+  này khi tôi không nói rõ.
+- Tiền tệ hiển thị: [vd PHP].
+
+## Cách trả lời
+- Luôn trả lời bằng tiếng Việt, ngắn gọn, đi thẳng vào việc.
+- Khi liệt kê nhiều đơn, trình bày dạng bảng: mã đơn, khách, tracking,
+  partner, COD, trạng thái.
+- Ngày giờ theo dd/mm/yyyy.
+
+## Nguyên tắc về dữ liệu
+- Luôn dùng số liệu thật lấy từ FFM, không ước lượng hay phỏng đoán.
+- Nếu không tìm thấy dữ liệu, nói rõ "không có dữ liệu" — không tự bịa.
+- Khi lọc theo khoảng thời gian, hỏi lại tôi mốc since/until nếu chưa rõ.
+
+## Khi báo cáo
+- Nêu rõ khoảng thời gian và country_code của số liệu đang báo cáo.
+- Số tiền đã được normalize sẵn (chia /100 nếu cần) — báo nguyên giá trị
+  trả về, không tự nhân/chia thêm.
 ```
 
 ---
 
-## 4. Tools
+## 6. Thư viện prompt
+
+Câu lệnh copy-paste sẵn cho các tình huống hay gặp. Thay phần trong ngoặc
+vuông, AI sẽ tự dịch sang tham số tool tương ứng.
+
+**Liệt kê đơn theo trạng thái:**
+
+> Liệt kê đơn ở trạng thái [shipped] tại [Philippines] trong [7 ngày qua],
+> sắp xếp mới nhất lên đầu, hiện mã đơn, khách, tracking, partner, COD.
+
+**Xuất Excel:**
+
+> Lấy toàn bộ đơn [đã giao] ở [PH] trong [tháng 4] và xuất ra bảng đầy đủ
+> các trường để tôi copy sang Excel.
+
+**Lọc theo COD:**
+
+> Có bao nhiêu đơn COD trên [500000] chưa đối soát với courier ở [PH]?
+
+**Đối soát:**
+
+> Liệt kê đơn có customer_reconciliation_status = [reconciled] trong
+> [30 ngày qua] ở [PH], tổng COD bao nhiêu?
+
+**Tra cứu 1 đơn:**
+
+> Cho tôi trạng thái và lịch sử xử lý của đơn [mã đơn / SĐT khách] ở [PH].
+
+**Lọc theo shop / partner:**
+
+> Đơn của shop [1234] giao qua partner [tên/ID] trong [tuần này] có bao
+> nhiêu, tổng giá trị?
+
+---
+
+## 7. Tools (tham khảo)
 
 ### `get_orders`
 
 Pass-through tới BE — trả raw response (`data`, `page`, `total_pages`, …).
-
-> Auth (`username` / `password`) lấy hoàn toàn từ env — không phải param
-> của tool. Server tự login + cache + refresh (xem §2.1).
+Dùng khi cần dữ liệu thô / field BE chưa được normalize.
 
 | field | type | note |
 |---|---|---|
-| `country_code` | **string** (bắt buộc) | Phone-code (vd `"63"`, `"66"`…) — không default. Xem §2.2. |
-| `host` | string? | override env `SEA_FULFILLMENT_HOST` (bắt buộc nếu env chưa set) |
-| `filter` | object? | object chứa filter keys — xem §4.1 |
-| `page` | number? | pagination (1-based). Thường nằm trong `filter`, nhưng có thể truyền top-level. |
-| `page_size` | number? | default FE dùng 30 (table) / 500 (export). Max ~2000. |
-| `load_full` | boolean? | true → BE trả full order schema (shipping_info, items, partner, status_histories, …). Cần cho `get_orders_normalized`. |
-| `is_summarize` | boolean? | true → BE chỉ trả `id` + counters, không enrich. |
-| `extra` | object? | merge vào body request (vd `sort_by`, `sort_direction`, `load_partner`, …). |
+| `country_code` | **string** (bắt buộc) | Phone-code (`"63"`, `"66"`…). Xem §2.3. |
+| `host` | string? | override env `SEA_FULFILLMENT_HOST`. |
+| `filter` | object? | object chứa filter keys — xem §7.1. |
+| `page` | number? | pagination (1-based). |
+| `page_size` | number? | default FE 30 (table) / 500 (export). Max ~2000. |
+| `load_full` | boolean? | true → BE trả full order schema. Cần cho normalize. |
+| `is_summarize` | boolean? | true → BE chỉ trả `id` + counters. |
+| `extra` | object? | merge vào body request (vd `sort_by`, `sort_direction`). |
 
-#### 4.1. `filter` chi tiết
-
-Body của request `POST /api/orders/get_orders` (tham khảo cách FE
-sea-fulfillment-web build params: `getOrders({ filter, sort_by, sort_direction })`
-+ các filter component sort popover / printed-count / processing-count /
-range picker / advance filter).
+#### 7.1. `filter` chi tiết
 
 **Pagination + search:**
 
@@ -398,113 +336,85 @@ range picker / advance filter).
 | `page` | number | 1-based |
 | `page_size` | number | default 30 ở FE table |
 | `keyword` | string[] | full-text search (display_id, phone, name, …) |
-| `order_ids` | number[] | filter list ID cụ thể (dùng cho export flow) |
+| `order_ids` | number[] | filter list ID cụ thể (export flow) |
 
 **Status / counter:**
 
 | Key | Type | Note |
 |---|---|---|
-| `statuses` | string[] | `new`, `confirmed`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`, … (xem `ORDER_STATUS_TEXT` trong [src/constants.ts](src/constants.ts)) |
-| `sub_status` | string | sub-status filter (filter ngang StatusCounter) |
-| `printed_count` | string/number | `OrderFilterPrintedCount` — vd `0` để lọc đơn chưa in |
-| `processing_count` | string/number | `OrderFilterProcessingCount` — count đơn đang xử lý |
+| `statuses` | string[] | `new`, `confirmed`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`, … |
+| `sub_status` | string | sub-status filter |
+| `printed_count` | string/number | vd `0` để lọc đơn chưa in |
+| `processing_count` | string/number | count đơn đang xử lý |
 
-**Date range (via) — dynamic key theo `time_key`:**
+**Date range — dynamic key theo `time_key`:**
 
 | Key | Type | Note |
 |---|---|---|
-| `time_key` | string | Field timestamp filter theo, vd `inserted_at`, `updated_at`, `assign_sale_at`, `picked_up_at`, `send_to_partner_at`, `delivered_at`, `first_assign_sale_at`. |
-| `<time_key>:ranges` | `{ since, until }` | **ISO 8601 NaiveDateTime string** (`"YYYY-MM-DDTHH:MM:SS"`, BE parse qua `Tools.parse_ranges` → `NaiveDateTime.from_iso8601!`). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch hay timezone offset — BE sẽ silently trả mảng rỗng. |
+| `time_key` | string | Field timestamp filter theo: `inserted_at`, `updated_at`, `assign_sale_at`, `picked_up_at`, `send_to_partner_at`, `delivered_at`, `first_assign_sale_at`. |
+| `<time_key>:ranges` | `{ since, until }` | **ISO 8601 NaiveDateTime string** `"YYYY-MM-DDTHH:MM:SS"`. VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch hay timezone offset — BE sẽ silently trả mảng rỗng. |
 | `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
 
-**Advance filter** — list option lấy thẳng từ FE `AdvanceFilterV1`. Mỗi key BE chỉ accept đúng các enum dưới đây — KHÔNG phải free-form string/array tùy ý.
+**Advance filter** — mỗi key chỉ accept đúng enum dưới đây, KHÔNG free-form:
 
 | Key | Value | Label FE | Note |
 |---|---|---|---|
-| `shop_id` | `number` hoặc `"no_shop"` | POS Shop / No Shop | shop_id từ Pancake POS. `"no_shop"` = đơn chưa gán shop. |
+| `shop_id` | `number` hoặc `"no_shop"` | POS Shop / No Shop | shop_id từ Pancake POS. |
 | `partner_id` | `number` hoặc `"no_courier"` | Courier / No Courier | |
-| `service_types` | `string` | Service Type | Lấy từ `getServiceTypes(ffmSettings)` — `ffmSettings` type=`customer_service_type`. Hoặc `"No Service Type"`. |
-| `tags` | `number[]` (tag ID) hoặc `"no_tag"` | Tag / No tag | Có thêm flow include/exclude qua `is_exclude_tags` flag. |
-| `product_id` / `variation_id` | `number` | Product / Variation | Search + chọn. |
-| `total_quantity` | `number` | Total Quantity | Number trực tiếp, không phải `{min,max}`. |
+| `service_types` | `string` | Service Type | Từ `ffmSettings` type `customer_service_type`, hoặc `"No Service Type"`. |
+| `tags` | `number[]` (tag ID) hoặc `"no_tag"` | Tag / No tag | include/exclude qua `is_exclude_tags`. |
+| `product_id` / `variation_id` | `number` | Product / Variation | |
+| `total_quantity` | `number` | Total Quantity | Number trực tiếp, không `{min,max}`. |
 | `cod` | `"no_cod"` / `"has_cod"` / `"<op>_<amount>"` | COD | `<op>` ∈ `eq` / `gt_or_eq` / `lt_or_eq`. VD `"gt_or_eq_50000"`. |
-| `is_duplicated_phone` | `true` / `false` | Duplicated Phone / Not Duplicated Phone | boolean (KHÔNG phải string). |
-| `is_duplicated_ip` | `true` / `false` | Duplicated IP / Not Duplicated IP | boolean. |
-| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Courier Reconciliation Status | Value chứa `"not_yet"` → BE đảo thành `exists / must_not exists` query (lọc đơn chưa từng có status nào). |
-| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Customer Reconciliation Status | Cùng logic `not_yet` như courier. |
-| `assigning_sale_id` / `assigning_care_id` | `number` (user ID) hoặc `"no_user"` / `"has_user"` | Assigning Sale|Care | |
-| `delivery_address_id` | `number` | Delivery Address | Cluster theo addr. |
-| `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | No Waybill Number / Matched Waybill Number | **Enum, KHÔNG phải tracking string**. |
-| `combo_product` | `number` | Combo | Combo / bundle product ID. |
-| `order_source` | `"non_marketplace"` / `"-3"` / `"-4"` / `"-9"` | Non-Marketplace / Shopee / Lazada / TikTok | Marketplace ID string. |
-| `saved_filter_id` | `number` | Saved Filter | Preset đã save. |
+| `is_duplicated_phone` | `true` / `false` | Duplicated Phone | boolean (KHÔNG phải string). |
+| `is_duplicated_ip` | `true` / `false` | Duplicated IP | boolean. |
+| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Courier Reconciliation Status | Value chứa `"not_yet"` → BE đảo thành must_not query. |
+| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Customer Reconciliation Status | Cùng logic `not_yet`. |
+| `assigning_sale_id` / `assigning_care_id` | `number` hoặc `"no_user"` / `"has_user"` | Assigning Sale/Care | |
+| `delivery_address_id` | `number` | Delivery Address | |
+| `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | No / Matched Waybill Number | **Enum, KHÔNG phải tracking string.** |
+| `combo_product` | `number` | Combo | |
+| `order_source` | `"non_marketplace"` / `"-3"` / `"-4"` / `"-9"` | Non-Marketplace / Shopee / Lazada / TikTok | |
+| `saved_filter_id` | `number` | Saved Filter | |
 | `slot_warehouse_id` | `number` | Warehouse | |
-| `pending_reason_id` | `number` hoặc `-1` | Pending Reason | `-1` = "Other reason". |
-| `cancel_reason_id` | `number` hoặc `-2` | Cancel Reason | `-2` = "Other reason". |
+| `pending_reason_id` | `number` hoặc `-1` | Pending Reason | `-1` = Other reason. |
+| `cancel_reason_id` | `number` hoặc `-2` | Cancel Reason | `-2` = Other reason. |
 | `shift` | `"morning"` / `"afternoon"` / `"evening"` | Shift | |
 | `category_id` | `number` hoặc `"no_category"` | Category | |
 | `business_countries_ids` | `string` (country_code) hoặc `"no_business_countries"` | Countries | |
 
-**Cơ chế exclude:** Mỗi filter ở trên (trừ shop_id/saved_filter_id/…) có option đặc biệt `value: "exclude"` set kèm flag `is_exclude_<key>: true` ở body. BE đảo `must` → `must_not` cho key đó. Truyền cùng filter:
+**Exclude:** thêm flag `is_exclude_<key>: true` để BE đảo `must` → `must_not`:
 
 ```json
 { "filter": { "tags": [123], "is_exclude_tags": true } }
 ```
 
-**Sort (top-level, ngoài `filter`):**
-
-| Key | Type | Note |
-|---|---|---|
-| `sort_by` | string | `inserted_at`, `updated_at`, `total_price`, `total_quantity`, `cod`, … |
-| `sort_direction` | `"asc"` / `"desc"` | |
-
-Truyền `sort_by` / `sort_direction` qua field `extra` (vì MCP tool chỉ
-nhận `filter` ở top-level):
+**Sort:** truyền qua `extra` (MCP tool chỉ nhận `filter` ở top-level):
 
 ```json
 { "filter": { "statuses": ["shipped"] }, "extra": { "sort_by": "inserted_at", "sort_direction": "desc" } }
 ```
 
-**Lưu ý:** đây là filter keys FE đang dùng — không guarantee BE accept hết
-hoặc chưa accept thêm key khác.
-
 ### `get_orders_normalized`
 
 Tự bật `load_full=true`, gọi BE, rồi chạy port của
-`OrderExportExcel.formatData`. Output là mảng order phẳng với các trường:
+`OrderExportExcel.formatData`. Trả mảng order phẳng — dùng khi user muốn
+liệt kê / xuất bảng / Excel.
 
-- **Base:** `id`, `display_id`, `status` (text), `status_key`, `index`,
-  `requested_tracking_id`, `platform_order_id`
-- **Shop:** `shop_id`, `pos_shop_id`, `pos_shop_name`, `shop`
-- **Customer / address:** `customer_name`, `phone_number`, `province_name`,
-  `district_name`, `commune_name`, `postal_code`, `full_address`,
-  `country_code`
-- **Items:** `total_quantity`, `total_weight` (gram), `weight` (kg),
-  `product_name`, `remarks`, `items` (raw)
-- **Money** (đã chia `/100` nếu currency không thuộc `INT_CURRENCY_LIST`):
-  `surcharge`, `cod`, `total_price`, `transfer_money`
-- **Partner / shipping:** `tracking_number`, `partner_name`,
-  `delivery_status`, `send_to_partner_at`, `shipped_at`, `completed_at`,
-  `confirmed_at`, `courier_weight`
-- **Reconciliation:** `courier_reconciliation_status`,
-  `customer_reconciliation_status`, `courier_reconciliation`
-  (map theo `RECONCILIATION_KEYS`), `customer_reconciliation`,
-  `customer_reconciliation_cod`
-- **Date:** `inserted_at`, `updated_at`, `assign_sale_at`,
-  `first_assign_sale_at`, `expected_receipt_date`, `assign_care_at`
-- **Tags / reason / user:** `tags` (name array), `call_status`,
-  `cancel_reason`, `assigning_sale_id`, `assigning_care_id`
-- **Misc:** `telesale_note`, `service_types`
-
-Datetime trả ISO string — client tự format theo locale (FE bản gốc dùng
-`handleExportDateTime`).
+Output gồm các trường: `id`, `display_id`, `status` (text), `shop`,
+`customer_name`, `phone_number`, `full_address`, `total_quantity`,
+`weight`, `tracking_number`, `partner_name`, `cod`, `total_price`,
+`send_to_partner_at`, `shipped_at`, `completed_at`,
+`courier_reconciliation_status`, `customer_reconciliation_status`, `tags`,
+`service_types`, … (tiền đã chia `/100` nếu currency không thuộc
+`INT_CURRENCY_LIST`; datetime trả ISO string).
 
 Input thêm so với `get_orders`:
 
 | field | type | note |
 |---|---|---|
-| `paginate` | boolean? | true → loop tới hết hoặc đạt `max_pages` |
-| `max_pages` | number? | default 20 |
+| `paginate` | boolean? | true → loop tới hết hoặc đạt `max_pages`. |
+| `max_pages` | number? | default 20. |
 
 Output:
 
@@ -521,42 +431,27 @@ Khi `paginate=true`, `pagination` là `null` (đã gộp).
 
 ---
 
-## 5. Ví dụ prompt
-
-Sau khi cắm xong, hỏi assistant:
-
-> Lấy 5 đơn shipped gần nhất ở shop 1234 và liệt kê tracking_number,
-> partner_name, full_address, total_price.
-
-Assistant sẽ gọi `get_orders_normalized` với
-`filter={ shop_ids: [1234], statuses: ["shipped"] }`, `page_size=5`,
-rồi trả về danh sách.
-
-> Có bao nhiêu đơn COD trên 500K chưa reconcile với courier?
-
-→ assistant gọi với `filter={ courier_reconciliation_status:
-"not_reconciled" }` + `paginate=true`, lọc `cod > 500` rồi đếm.
-
----
-
-## 6. Troubleshooting
+## 8. Troubleshooting
 
 | Triệu chứng | Xử lý |
 |---|---|
-| `Missing credentials` | Set env `SEA_FULFILLMENT_USERNAME` + `SEA_FULFILLMENT_PASSWORD` hoặc truyền `username`/`password` mỗi call. Xem §2. |
-| `Missing host` | Set env `SEA_FULFILLMENT_HOST` (vd `https://fulfillment.pancake.vn`) hoặc truyền `host` mỗi call. Xem §2.3. |
-| `login HTTP 401` / `login failed: Wrong username or password` | Sai username/password, hoặc login sai tenant (host không khớp với tenant của user). Check lại env / cấu hình client MCP. |
-| `get_orders HTTP 401` | Token cache đã bị BE revoke giữa chừng (đổi password, force logout…). Server đã auto-retry 1 lần; nếu vẫn fail → kiểm tra password env có còn đúng không. |
-| `get_orders HTTP 403` | Token đúng nhưng `country_code` không match country user được phép. |
-| Tool không xuất hiện trong Claude Code | `claude mcp list` xem status. Nếu `✗ Failed`, chạy lệnh ở mục 1 verify binary `node dist/index.js` chạy được. |
-| Server log `0_VN_orders_alias` | Bạn truyền `country_code=VN/84` — sai. Phải là `63 / 66 / 60 / 62 / 65`. |
-| Tiền bị nhân 100 sai | Check `country_code` truyền đúng — logic chia `/100` đọc currency theo country (xem `INT_CURRENCY_LIST` trong [src/constants.ts](src/constants.ts)). |
+| `Missing credentials` | Chưa set `SEA_FULFILLMENT_USERNAME` / `SEA_FULFILLMENT_PASSWORD`. Xem §2. |
+| `Missing host` | Chưa set `SEA_FULFILLMENT_HOST`. Xem §2.2. |
+| `login failed: Wrong username or password` | Sai mật khẩu, hoặc login sai tenant (host không khớp). |
+| `get_orders HTTP 401` | Token bị revoke giữa chừng (đổi password / force logout). Server đã auto-retry; nếu vẫn fail, kiểm tra password env. |
+| `get_orders HTTP 403` | Token đúng nhưng `country_code` không thuộc nước user được phép. |
+| Tool không xuất hiện | `claude mcp list` xem status. `npx` báo lỗi → xem gotcha PATH ở §3.2. |
+| `command not found: npx` (Claude Desktop macOS) | App GUI không có PATH của shell — dùng đường dẫn tuyệt đối tới `npx` + set `PATH` trong `env`. Xem §3.2. |
+| Server log `0_VN_orders_alias` | Truyền `country_code=VN/84` — sai. Phải là `63 / 66 / 60 / 62 / 65`. |
+| `npx` lỗi cài (TAR_ENTRY_ERROR / module not found) | Cache npx hỏng. Xóa `~/.npm/_npx` rồi restart client để cài lại. |
+| Lọc theo ngày trả về rỗng | `:ranges` phải là ISO datetime `"YYYY-MM-DDTHH:MM:SS"`, không phải unix epoch. Xem §7.1. |
 
 ---
 
-## 7. Dev
+## 9. Dev
 
 ```bash
+npm install
 npm run dev    # tsc watch
 node dist/index.js
 
@@ -564,9 +459,9 @@ node dist/index.js
 npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
-Source map:
-- [src/index.ts](src/index.ts) — MCP server entry, tool routing.
-- [src/api.ts](src/api.ts) — HTTP client `callGetOrders` + `fetchAllOrders`.
-- [src/normalize.ts](src/normalize.ts) — port `OrderExportExcel.formatData`.
-- [src/constants.ts](src/constants.ts) — `INT_CURRENCY_LIST`,
-  `SUPPORTED_COUNTRIES`, `ORDER_STATUS_TEXT`, `RECONCILIATION_KEYS`.
+Cấu trúc:
+- `src/index.ts` — MCP server entry, tool routing.
+- `src/api.ts` — HTTP client `callGetOrders` + `fetchAllOrders`.
+- `src/normalize.ts` — port `OrderExportExcel.formatData`.
+- `src/constants.ts` — `INT_CURRENCY_LIST`, `SUPPORTED_COUNTRIES`,
+  `SUPPORTED_HOSTS`, `ORDER_STATUS_TEXT`, `RECONCILIATION_KEYS`.
