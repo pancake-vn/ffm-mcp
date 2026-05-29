@@ -524,6 +524,14 @@ docker run -p 8080:8080 \
 > Host **không** đặt qua env — user chọn tenant trên trang Authorize, host được nhúng
 > vào token. Không lưu username/password server-side; chỉ giữ JWT FFM trong token đã ký.
 
+**Deploy bằng pm2 (Node, không Docker)** — VM clone repo + tạo `/etc/ffm-mcp.env`,
+nginx (`deploy/nginx/mcp-ffm.pancake.vn.conf`) proxy về VM:8080. Update từ local 1 lệnh:
+
+```bash
+SSH_HOST=ubuntu@<VM_IP> ./deploy/deploy.sh
+# push git → SSH vào VM → pull + npm ci + build + pm2 reload + pm2 save
+```
+
 ### 10.3. Endpoints
 
 - `POST /mcp` — MCP Streamable HTTP (Bearer-protected).
