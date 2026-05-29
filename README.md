@@ -524,12 +524,28 @@ docker run -p 8080:8080 \
 > Host **không** đặt qua env — user chọn tenant trên trang Authorize, host được nhúng
 > vào token. Không lưu username/password server-side; chỉ giữ JWT FFM trong token đã ký.
 
-**Deploy bằng pm2 (Node, không Docker)** — VM clone repo + tạo `/etc/ffm-mcp.env`,
-nginx (`deploy/nginx/mcp-ffm.pancake.vn.conf`) proxy về VM:8080. Update từ local 1 lệnh:
+**Deploy bằng pm2 (Node, không Docker)** — cấu hình host/repo/path trong
+`ecosystem.config.cjs` (block `deploy.production`), nginx
+(`deploy/nginx/mcp-ffm.pancake.vn.conf`) proxy về VM:8080.
+
+Lần đầu trên VM (1 lần):
 
 ```bash
-SSH_HOST=ubuntu@<VM_IP> ./deploy/deploy.sh
-# push git → SSH vào VM → pull + npm ci + build + pm2 reload + pm2 save
+# sửa user/host/path trong ecosystem.config.cjs cho khớp VM
+git clone https://github.com/pancake-vn/ffm-mcp.git /home/ubuntu/ffm-mcp
+sudo tee /etc/ffm-mcp.env >/dev/null <<'EOF'
+PUBLIC_URL=https://mcp-ffm.pancake.vn
+OAUTH_SIGNING_SECRET=<random-secret-dài>
+PORT=8080
+EOF
+```
+
+Mỗi lần update từ local, chỉ 1 lệnh (push trước):
+
+```bash
+git push && npm run deploy
+# đọc host/repo/path từ ecosystem.config.cjs → SSH vào VM →
+# git reset về commit mới nhất + npm ci + build + pm2 startOrReload
 ```
 
 ### 10.3. Endpoints

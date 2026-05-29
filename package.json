@@ -16,6 +16,7 @@
     "start": "node dist/index.js",
     "start:http": "node dist/http.js",
     "dev": "tsc -w",
+    "deploy": "node deploy.cjs",
     "prepare": "npm run build"
   },
   "dependencies": {
