@@ -13,12 +13,14 @@ import {
 import { z } from "zod";
 
 import { CallAuth, callGetOrders, fetchAllOrders } from "./api.js";
+import { localRangesToUtc, resolveUtcOffset } from "./filter.js";
 import { normalizeOrders } from "./normalize.js";
 
 const BaseInput = {
   country_code: z.string().min(1),
   host: z.string().url().optional(),
   filter: z.record(z.unknown()).optional(),
+  timezone: z.union([z.number(), z.string()]).optional(),
   page: z.number().int().positive().optional(),
   page_size: z.number().int().positive().max(2000).optional(),
   extra: z.record(z.unknown()).optional(),
@@ -62,9 +64,11 @@ const COMMON_PROPERTIES = {
       "theo time_key): time_key (vd 'inserted_at'/'updated_at'/" +
       "'assign_sale_at'/'picked_up_at'/'send_to_partner_at'/" +
       "'delivered_at'/'first_assign_sale_at'), '<time_key>:ranges' = " +
-      "{ since, until } với ISO 8601 NaiveDateTime " +
-      "'YYYY-MM-DDTHH:MM:SS' (KHÔNG dùng unix epoch — BE silently trả " +
-      "[]), '<time_key>:editor_ids' (number[]); advance filter — value " +
+      "{ since, until } dạng ISO 'YYYY-MM-DDTHH:MM:SS' theo GIỜ LOCAL " +
+      "(của user nếu truyền `timezone`, không thì giờ của country): MCP tự " +
+      "quy đổi sang UTC trước khi gọi BE (giống web). KHÔNG dùng unix epoch (BE " +
+      "silently trả []). Nếu tự thêm hậu tố 'Z'/offset thì coi là " +
+      "absolute, MCP không shift nữa. '<time_key>:editor_ids' (number[]); advance filter — value " +
       "PHẢI là enum FE accept, KHÔNG free-form: shop_id (number | " +
       "'no_shop'); partner_id (number | 'no_courier'); service_types " +
       "(string từ ffmSettings); tags (number[] | 'no_tag', kèm " +
@@ -87,6 +91,16 @@ const COMMON_PROPERTIES = {
       "Exclude: key + is_exclude_<key>: true. Sort: dùng `extra` — " +
       "{ sort_by, sort_direction:'asc'|'desc' }.",
   },
+  timezone: {
+    type: ["number", "string"],
+    description:
+      "LUÔN truyền khi filter có date range (`*:ranges`). Offset giờ local " +
+      "của USER — suy ra từ giờ/locale hiện tại của user (vd VN/TH → 7, " +
+      "PH/SG/MY → 8; cũng nhận '+07:00'). Đây là offset của các mốc since/until " +
+      "bạn điền: MCP sẽ convert local→UTC trước khi gọi BE (giống web dùng TZ " +
+      "trình duyệt). CHỈ bỏ qua khi hoàn toàn không xác định được giờ user — " +
+      "khi đó fallback timezone của country_code (có thể lệch ranh giới ngày).",
+  },
   page: { type: "number" },
   page_size: { type: "number" },
   extra: { type: "object", description: "Param phụ merge vào body request." },
@@ -100,7 +114,9 @@ export const TOOL_DEFS = [
       "(POST /api/orders/get_orders). Dùng khi cần dữ liệu thô hoặc field " +
       "BE chưa normalize. Nếu user muốn LIỆT KÊ / XUẤT BẢNG / EXCEL đơn " +
       "thì ưu tiên get_orders_normalized. BẮT BUỘC truyền country_code " +
-      "(phone-code: 63=PH, 66=TH, 60=MY, 62=ID, 65=SG).",
+      "(phone-code: 63=PH, 66=TH, 60=MY, 62=ID, 65=SG). Khi lọc theo " +
+      "khoảng thời gian (filter `*:ranges`) BẮT BUỘC kèm `timezone` theo " +
+      "giờ local của user.",
     inputSchema: {
       type: "object",
       required: ["country_code"],
@@ -126,7 +142,9 @@ export const TOOL_DEFS = [
       "partner_name, cod, total_price (đã chia /100 theo currency), shop, " +
       "send_to_partner_at, shipped_at, completed_at, " +
       "courier_*/customer_* reconciliation, tags, service_types, … Bật " +
-      "paginate=true để loop hết các trang. BẮT BUỘC country_code.",
+      "paginate=true để loop hết các trang. BẮT BUỘC country_code. Khi lọc " +
+      "theo khoảng thời gian (filter `*:ranges`) BẮT BUỘC kèm `timezone` " +
+      "theo giờ local của user.",
     inputSchema: {
       type: "object",
       required: ["country_code"],
@@ -170,9 +188,10 @@ export async function handleToolCall(
           countryCode: args.country_code,
           auth: binding.auth,
         };
+        const offset = resolveUtcOffset(args.timezone, args.country_code);
         const params: Record<string, unknown> = {
           ...(args.extra ?? {}),
-          filter: args.filter ?? {},
+          filter: localRangesToUtc(args.filter ?? {}, offset) ?? {},
         };
         if (args.page != null) params.page = args.page;
         if (args.page_size != null) params.page_size = args.page_size;
@@ -189,13 +208,15 @@ export async function handleToolCall(
         const args = GetOrdersNormalizedInput.parse(rawArgs ?? {});
         const country = args.country_code;
         const ctx = { host: binding.host, countryCode: country, auth: binding.auth };
+        const offset = resolveUtcOffset(args.timezone, country);
+        const filter = localRangesToUtc(args.filter ?? {}, offset);
 
         let orders: Record<string, any>[];
         let pagination: Record<string, unknown> | null = null;
 
         if (args.paginate) {
           orders = (await fetchAllOrders(ctx, {
-            filter: args.filter,
+            filter,
             pageSize: args.page_size,
             maxPages: args.max_pages,
             extraParams: args.extra,
@@ -203,7 +224,7 @@ export async function handleToolCall(
         } else {
           const params: Record<string, unknown> = {
             ...(args.extra ?? {}),
-            filter: args.filter ?? {},
+            filter,
             page: args.page ?? 1,
             page_size: args.page_size ?? 50,
             load_full: true,

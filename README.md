@@ -373,7 +373,8 @@ Dùng khi cần dữ liệu thô / field BE chưa được normalize.
 | Key | Type | Note |
 |---|---|---|
 | `time_key` | string | Field timestamp filter theo: `inserted_at`, `updated_at`, `assign_sale_at`, `picked_up_at`, `send_to_partner_at`, `delivered_at`, `first_assign_sale_at`. |
-| `<time_key>:ranges` | `{ since, until }` | **ISO 8601 NaiveDateTime string** `"YYYY-MM-DDTHH:MM:SS"`. VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch hay timezone offset — BE sẽ silently trả mảng rỗng. |
+| `<time_key>:ranges` | `{ since, until }` | ISO string `"YYYY-MM-DDTHH:MM:SS"` theo **giờ LOCAL** (giờ user nếu truyền param `timezone`, không thì giờ của `country_code` — vd `63` → PH UTC+8). MCP tự quy đổi sang UTC trước khi gọi BE (giống web — BE so với cột lưu UTC). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch — BE silently trả mảng rỗng. Nếu tự thêm hậu tố `Z`/offset thì coi là absolute, MCP không shift nữa. |
+| `timezone` | number \| string | Top-level (ngoài `filter`) — offset giờ của since/until: `7`, `8`, hoặc `"+07:00"`. **AI client nên LUÔN truyền khi filter có `*:ranges`**, theo giờ local của user → MCP convert local→UTC. Thiếu → fallback timezone của `country_code` (có thể lệch ranh giới ngày). |
 | `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
 
 **Advance filter** — mỗi key chỉ accept đúng enum dưới đây, KHÔNG free-form:

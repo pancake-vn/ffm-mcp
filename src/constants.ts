@@ -60,6 +60,23 @@ export function currencyByCountry(countryCode: string | undefined): string | und
   return SUPPORTED_COUNTRIES.find((c) => c.countryCode === String(countryCode))?.currency;
 }
 
+// UTC offset (giờ) theo country — dùng để quy đổi date range local → UTC giống web
+// (dayjs .toISOString()). BE so since/until với cột lưu UTC nên phải gửi UTC.
+// Các nước này không có DST → offset cố định. ID dùng WIB (Jakarta, +7).
+const COUNTRY_UTC_OFFSET: Record<string, number> = {
+  "63": 8, // PH
+  "66": 7, // TH
+  "60": 8, // MY
+  "62": 7, // ID (WIB)
+  "65": 8, // SG
+  "856": 7, // Laos
+};
+
+export function utcOffsetByCountry(countryCode: string | undefined): number {
+  if (!countryCode) return 0;
+  return COUNTRY_UTC_OFFSET[String(countryCode)] ?? 0;
+}
+
 export const ORDER_STATUS_TEXT: Record<string, string> = {
   new: "New",
   need_attention: "Need attention",
