@@ -2,11 +2,13 @@
 //
 // Học theo sea-fulfillment-web/deploy.js: đọc host/repo/path từ ecosystem.config.cjs,
 // lấy commit mới nhất trên origin, SSH vào từng host pull + reset + post-deploy.
-// Khác web: repo PUBLIC nên pull qua https (không cần ssh-agent forwarding).
+// Repo private → pull qua SSH git@; ssh -A forward agent của máy local cho VM
+// dùng GitHub access (giống sea-fulfillment-web).
 //
 // Lưu ý: deploy phản ánh commit ĐÃ push lên origin. Push trước khi chạy.
 //
-// Lần đầu trên VM (1 lần): git clone repo vào `path` + tạo /etc/ffm-mcp.env. Xem README §10.2.
+// Lần đầu (1 lần): `npm run setup` (pm2 clone repo vào <path>/source) + tạo /etc/ffm-mcp.env.
+// Xem README §10.2.
 
 const { exec } = require("child_process");
 
@@ -31,8 +33,9 @@ function latestCommit(repo, ref) {
 }
 
 function buildCommand(commit, path, postDeploy) {
+  // pm2 deploy ... setup clone repo vào ${path}/source — deploy update ở đó.
   return `set -e
-  cd ${path}
+  cd ${path}/source
   git fetch origin
   git reset --hard ${commit}
   ${postDeploy}`;
@@ -54,7 +57,7 @@ async function run() {
   await Promise.all(
     host.map((ip) => {
       console.log("\x1b[93m%s\x1b[0m", `-> ${user}@${ip}`);
-      return sh(`ssh ${user}@${ip} '${buildCommand(commit, path, postDeploy)}'`);
+      return sh(`ssh -A ${user}@${ip} '${buildCommand(commit, path, postDeploy)}'`);
     }),
   );
 

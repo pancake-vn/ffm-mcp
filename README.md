@@ -113,6 +113,11 @@ chia `/100`, có thể sai với LAK. KHÔNG dùng `"VN"` / `"84"` / `"VND"`.
 **Cách nhanh nhất (local) — chạy thẳng từ GitHub, không cần clone/build.** `npx`
 tự tải repo và build lần đầu. Chỉ cần Node 18+ (xem §1).
 
+> ⚠️ Repo này **private** → `npx github:pancake-vn/ffm-mcp` chỉ chạy được trên máy
+> đã có quyền truy cập GitHub repo (SSH key hoặc `gh auth login`). End-user không có
+> quyền repo nên dùng **(A) Remote connector** ([§10](#10-remote-server-http--oauth)) —
+> không cần repo, chỉ cần URL + đăng nhập.
+
 ### 3.1. Claude Code (CLI)
 
 Chạy 1 lệnh, thay 3 giá trị in hoa bằng thông tin của bạn:
@@ -528,16 +533,16 @@ docker run -p 8080:8080 \
 `ecosystem.config.cjs` (block `deploy.production`), nginx
 (`deploy/nginx/mcp-ffm.pancake.vn.conf`) proxy về VM:8080.
 
-Lần đầu trên VM (1 lần):
+Lần đầu (1 lần) — sửa `user`/`host`/`path` trong `ecosystem.config.cjs` cho khớp VM, rồi:
 
 ```bash
-# sửa user/host/path trong ecosystem.config.cjs cho khớp VM
-git clone https://github.com/pancake-vn/ffm-mcp.git /home/ubuntu/ffm-mcp
-sudo tee /etc/ffm-mcp.env >/dev/null <<'EOF'
+npm run setup    # pm2 SSH vào VM, clone repo vào <path>/source
+# tạo env file trên VM (chứa secret, ngoài git):
+ssh <user>@<host> 'sudo tee /etc/ffm-mcp.env >/dev/null <<EOF
 PUBLIC_URL=https://mcp-ffm.pancake.vn
 OAUTH_SIGNING_SECRET=<random-secret-dài>
 PORT=8080
-EOF
+EOF'
 ```
 
 Mỗi lần update từ local, chỉ 1 lệnh (push trước):
@@ -545,7 +550,7 @@ Mỗi lần update từ local, chỉ 1 lệnh (push trước):
 ```bash
 git push && npm run deploy
 # đọc host/repo/path từ ecosystem.config.cjs → SSH vào VM →
-# git reset về commit mới nhất + npm ci + build + pm2 startOrReload
+# git reset <path>/source về commit mới nhất + npm ci + build + pm2 startOrReload
 ```
 
 ### 10.3. Endpoints
