@@ -46,6 +46,9 @@ const resolveAuth: ResolveAuth = (extra) => {
 };
 
 const app = express();
+// Chạy sau reverse proxy (nginx) terminate TLS: tin X-Forwarded-* của hop đầu
+// để req.ip đúng (rate-limit OAuth không gộp mọi user vào chung IP proxy).
+app.set("trust proxy", 1);
 
 // OAuth endpoints: /authorize, /token, /register, /.well-known/* (SDK lo).
 app.use(
