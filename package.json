@@ -1,10 +1,11 @@
 {
   "name": "ffm-mcp",
-  "version": "0.2.0",
-  "description": "MCP server cho sea-fulfillment: tự login bằng username/password, gọi /orders/get_orders, normalize order theo các field OrderExportExcel.js dùng để export Excel.",
+  "version": "0.3.0",
+  "description": "MCP server cho sea-fulfillment: stdio (login username/password) + remote HTTP/OAuth. Gọi /orders/get_orders, normalize order theo các field OrderExportExcel.js dùng để export Excel.",
   "type": "module",
   "bin": {
-    "ffm-mcp": "dist/index.js"
+    "ffm-mcp": "dist/index.js",
+    "ffm-mcp-http": "dist/http.js"
   },
   "main": "dist/index.js",
   "files": [
@@ -13,14 +14,17 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:http": "node dist/http.js",
     "dev": "tsc -w",
     "prepare": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^4.21.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^20.12.7",
     "typescript": "^5.5.4"
   },

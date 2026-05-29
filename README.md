@@ -103,8 +103,15 @@ chia `/100`, có thể sai với LAK. KHÔNG dùng `"VN"` / `"84"` / `"VND"`.
 
 ## 3. Cắm vào AI client
 
-**Cách nhanh nhất — chạy thẳng từ GitHub, không cần clone/build.** `npx` tự
-tải repo và build lần đầu. Chỉ cần Node 18+ (xem §1).
+> **2 cách cắm:**
+> - **(A) Remote connector** — nếu Pancake đã deploy `mcp-ffm.pancake.vn`: chỉ
+>   dán 1 URL, đăng nhập qua trình duyệt, không cần Node trên máy. Mượt nhất cho
+>   end-user. Xem [§10](#10-remote-server-http--oauth).
+> - **(B) Local (stdio)** — chạy npx trên máy mình, đặt creds trong file config.
+>   Hướng dẫn dưới đây. Hợp cho dev / khi chưa có remote server.
+
+**Cách nhanh nhất (local) — chạy thẳng từ GitHub, không cần clone/build.** `npx`
+tự tải repo và build lần đầu. Chỉ cần Node 18+ (xem §1).
 
 ### 3.1. Claude Code (CLI)
 
@@ -461,16 +468,69 @@ Khi `paginate=true`, `pagination` là `null` (đã gộp).
 
 ```bash
 npm install
-npm run dev    # tsc watch
-node dist/index.js
+npm run dev          # tsc watch
+node dist/index.js   # stdio
+node dist/http.js    # remote (cần PUBLIC_URL + OAUTH_SIGNING_SECRET)
 
-# Inspector UI:
+# Inspector UI (stdio):
 npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
 Cấu trúc:
-- `src/index.ts` — MCP server entry, tool routing.
-- `src/api.ts` — HTTP client `callGetOrders` + `fetchAllOrders`.
+- `src/index.ts` — stdio entry (auth = username/password env).
+- `src/http.ts` — remote entry: Express + OAuth (`mcpAuthRouter`) + Streamable HTTP.
+- `src/oauth-provider.ts` — `OAuthServerProvider` bọc login FFM + trang Authorize.
+- `src/token.ts` — session JWT tự ký (HMAC) nhúng JWT FFM + host.
+- `src/tools.ts` — tool defs + `buildServer` + `handleToolCall` (dùng chung 2 entry).
+- `src/api.ts` — HTTP client (`callGetOrders`/`fetchAllOrders`, auth password|token).
 - `src/normalize.ts` — port `OrderExportExcel.formatData`.
-- `src/constants.ts` — `INT_CURRENCY_LIST`, `SUPPORTED_COUNTRIES`,
-  `SUPPORTED_HOSTS`, `ORDER_STATUS_TEXT`, `RECONCILIATION_KEYS`.
+- `src/constants.ts` — `SUPPORTED_COUNTRIES`, `SUPPORTED_HOSTS`, currency map…
+
+---
+
+## 10. Remote server (HTTP + OAuth)
+
+Cho phép cắm kiểu **"Add custom connector → dán URL → Authorize"** như Pancake POS:
+không cần Node trên máy user, đăng nhập 1 lần qua trình duyệt. Server là tầng trung
+gian gọi BE FFM (login + get_orders), **không sửa gì ở BE**.
+
+### 10.1. Kết nối (end-user)
+
+Claude Desktop → **Settings → Connectors → Add custom connector** → dán
+`https://mcp-ffm.pancake.vn/mcp` → trình duyệt mở trang Authorize → **chọn tenant**
+(fulfillment.pancake.vn, g-solution.vn, bigate.co…) + nhập username/password FFM →
+xong. Hỏi thử: *"liệt kê 5 đơn gần nhất ở Philippines"*.
+
+Token phát ra sống ~30 ngày (khớp hạn JWT FFM); hết hạn thì Authorize lại.
+
+### 10.2. Self-host / deploy
+
+```bash
+docker build -t ffm-mcp .
+docker run -p 8080:8080 \
+  -e PUBLIC_URL=https://mcp-ffm.pancake.vn \
+  -e OAUTH_SIGNING_SECRET=<random-secret-dài> \
+  ffm-mcp
+```
+
+Đặt sau reverse proxy có HTTPS (domain ở `PUBLIC_URL`). Env:
+
+| Env | Bắt buộc | Ý nghĩa |
+|---|---|---|
+| `PUBLIC_URL` | ✅ | Issuer URL công khai (cho OAuth metadata + redirect), vd `https://mcp-ffm.pancake.vn`. |
+| `OAUTH_SIGNING_SECRET` | ✅ | Secret HMAC ký session token. Đổi secret = vô hiệu mọi session cũ. |
+| `PORT` | — | Default 8080. |
+
+> Host **không** đặt qua env — user chọn tenant trên trang Authorize, host được nhúng
+> vào token. Không lưu username/password server-side; chỉ giữ JWT FFM trong token đã ký.
+
+### 10.3. Endpoints
+
+- `POST /mcp` — MCP Streamable HTTP (Bearer-protected).
+- `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource` — metadata.
+- `/authorize`, `/token`, `/register` — OAuth (SDK lo); `/login/submit` — nhận form đăng nhập.
+- `GET /healthz` — health check.
+
+> v1: client OAuth (DCR) + authorization code lưu in-memory → restart làm Claude
+> re-register (tự động). Session token là JWT stateless nên **không** mất khi restart.
+> Chưa hỗ trợ refresh token (hết hạn → Authorize lại).

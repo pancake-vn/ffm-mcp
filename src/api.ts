@@ -1,12 +1,7 @@
-// Wrapper gọi POST /api/orders/get_orders với auto-login.
-//
-// Tham chiếu:
-//   - sea-fulfillment lib/sea_fulfillment_web/router.ex:132 (post "/orders/get_orders")
-//   - sea-fulfillment lib/sea_fulfillment_web/controllers/order_controller.ex:11
-//
-// Auth: KHÔNG nhận access_token trực tiếp nữa. Caller truyền credentials
-// (host + username + password); module này dùng auth.ts để lấy + cache
-// token, và auto re-login khi 401.
+// Wrapper gọi POST /api/orders/get_orders với 2 kiểu auth:
+//   - password: tự login (auth.ts) + cache + retry re-login khi 401 (stdio mode).
+//   - token:    dùng JWT FFM có sẵn (http/OAuth mode); 401 → báo re-authorize
+//               vì không giữ password để re-login.
 
 import { invalidateToken, resolveAccessToken } from "./auth.js";
 
@@ -17,11 +12,14 @@ export class HttpError extends Error {
   }
 }
 
+export type CallAuth =
+  | { kind: "password"; username: string; password: string }
+  | { kind: "token"; token: string };
+
 export interface CallContext {
   host: string;
-  username: string;
-  password: string;
   countryCode: string;
+  auth: CallAuth;
 }
 
 export interface GetOrdersResponse {
@@ -31,6 +29,11 @@ export interface GetOrdersResponse {
   total_pages?: number;
   data?: unknown[];
   [k: string]: unknown;
+}
+
+async function resolveToken(ctx: CallContext): Promise<string> {
+  if (ctx.auth.kind === "token") return ctx.auth.token;
+  return resolveAccessToken(ctx.host, ctx.auth.username, ctx.auth.password);
 }
 
 async function rawCall(
@@ -80,20 +83,27 @@ export async function callGetOrders(
   params: Record<string, unknown>,
 ): Promise<GetOrdersResponse> {
   if (!ctx.host) throw new Error("callGetOrders: host is required");
-  let token = await resolveAccessToken(ctx.host, ctx.username, ctx.password);
+  const token = await resolveToken(ctx);
   try {
     return await rawCall(ctx.host, token, ctx.countryCode, params);
   } catch (err) {
     if (err instanceof HttpError && err.status === 401) {
-      // Token cache có thể đã invalid (revoked / password đổi). Force re-login 1 lần.
-      invalidateToken(ctx.host, ctx.username);
-      token = await resolveAccessToken(
-        ctx.host,
-        ctx.username,
-        ctx.password,
-        { force: true },
+      if (ctx.auth.kind === "password") {
+        // Token cache có thể đã invalid (revoked / password đổi). Force re-login 1 lần.
+        invalidateToken(ctx.host, ctx.auth.username);
+        const fresh = await resolveAccessToken(
+          ctx.host,
+          ctx.auth.username,
+          ctx.auth.password,
+          { force: true },
+        );
+        return await rawCall(ctx.host, fresh, ctx.countryCode, params);
+      }
+      // token mode: không có password để re-login → yêu cầu user authorize lại.
+      throw new HttpError(
+        401,
+        "FFM session đã hết hạn hoặc bị thu hồi — hãy authorize lại kết nối MCP.",
       );
-      return await rawCall(ctx.host, token, ctx.countryCode, params);
     }
     throw err;
   }

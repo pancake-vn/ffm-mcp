@@ -11,7 +11,7 @@
 //
 // In-flight dedup: nếu nhiều call cùng key cùng lúc, chỉ chạy 1 login.
 
-interface CachedToken {
+export interface CachedToken {
   accessToken: string;
   expEpoch: number; // unix seconds
 }
@@ -40,7 +40,10 @@ function decodeJwtExp(jwt: string): number | null {
   }
 }
 
-async function performLogin(
+// Login trực tiếp tới BE, trả { accessToken, expEpoch }. Dùng bởi:
+//   - resolveAccessToken (stdio: login + cache + refresh).
+//   - OAuth /authorize/submit (http: login để phát session token, không cache).
+export async function loginToFfm(
   host: string,
   username: string,
   password: string,
@@ -90,7 +93,7 @@ export async function resolveAccessToken(
   // Dedup các login đồng thời cùng key.
   let pending = inFlight.get(key);
   if (!pending) {
-    pending = performLogin(host, username, password).finally(() => {
+    pending = loginToFfm(host, username, password).finally(() => {
       inFlight.delete(key);
     });
     inFlight.set(key, pending);
