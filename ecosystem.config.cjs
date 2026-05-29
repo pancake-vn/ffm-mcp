@@ -28,6 +28,9 @@ module.exports = {
     production: {
       user: "cc",
       host: ["10.1.12.215"], // cùng VM với sea-fulfillment-web
+      // VM không có GitHub key riêng → forward ssh-agent của máy dev để clone
+      // private repo (máy dev phải `ssh-add` key có quyền repo).
+      ssh_options: "ForwardAgent=yes",
       ref: "origin/main",
       repo: "git@github.com:pancake-vn/ffm-mcp.git", // private repo → SSH
       path: "/home/cc/ffm-mcp",
