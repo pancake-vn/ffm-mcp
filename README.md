@@ -537,13 +537,16 @@ Lần đầu (1 lần) — sửa `user`/`host`/`path` trong `ecosystem.config.cj
 
 ```bash
 npm run setup    # pm2 SSH vào VM, clone repo vào <path>/source
-# tạo env file trên VM (chứa secret, ngoài git):
-ssh <user>@<host> 'sudo tee /etc/ffm-mcp.env >/dev/null <<EOF
-PUBLIC_URL=https://mcp-ffm.pancake.vn
-OAUTH_SIGNING_SECRET=<random-secret-dài>
-PORT=8080
-EOF'
+# tạo env file trên VM (chứa secret, ngoài git). LƯU Ý: phải chown về user
+# chạy pm2 (vd cc) — file root:root 600 thì node --env-file đọc "not found".
+ssh <user>@<host> 'SECRET=$(openssl rand -hex 32); \
+  printf "PUBLIC_URL=https://mcp-ffm.pancake.vn\nOAUTH_SIGNING_SECRET=%s\nPORT=8080\n" "$SECRET" \
+    | sudo tee /etc/ffm-mcp.env >/dev/null && \
+  sudo chown <user>:<user> /etc/ffm-mcp.env && sudo chmod 600 /etc/ffm-mcp.env'
 ```
+
+> `ssh_options: "ForwardAgent=yes"` trong `ecosystem.config.cjs` forward ssh-agent của
+> máy dev để VM clone private repo — máy dev phải `ssh-add` key có quyền repo trước.
 
 Mỗi lần update từ local, chỉ 1 lệnh (push trước):
 
