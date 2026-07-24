@@ -4,6 +4,10 @@
 //
 // Auth context KHÔNG đọc env trực tiếp ở đây — entry truyền vào qua `resolveAuth`
 // (cho buildServer) hoặc `binding` (cho handleToolCall).
+//
+// Tool DUY NHẤT: order_statistics — gọi POST /api/orders/statistics (Order Data
+// Statistics manual query, KHÔNG AI), trả aggregation group_by + metrics + totals
+// đã decorate nhãn/tiền tệ. KHÔNG list full order (khác get_orders cũ).
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
@@ -12,31 +16,55 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { CallAuth, callGetOrders, fetchAllOrders } from "./api.js";
-import { localRangesToUtc, resolveUtcOffset } from "./filter.js";
-import { normalizeOrders } from "./normalize.js";
+import { CallAuth, callStatistics, fetchShops } from "./api.js";
+import {
+  DATE_FIELD_KEYS,
+  GROUP_FIELDS,
+  METRIC_KEYS,
+} from "./constants.js";
+import { esOffsetString, localRangesToUtc, resolveUtcOffset } from "./filter.js";
+import { decorateStatistics } from "./statistics.js";
 
-const BaseInput = {
+const StatisticsInput = z.object({
   country_code: z.string().min(1),
   host: z.string().url().optional(),
   filter: z.record(z.unknown()).optional(),
+  group_by: z.union([z.string(), z.array(z.string())]).optional(),
+  metrics: z.array(z.string()).optional(),
+  time_key: z.string().optional(),
+  interval: z.string().optional(),
   timezone: z.union([z.number(), z.string()]).optional(),
-  page: z.number().int().positive().optional(),
-  page_size: z.number().int().positive().max(2000).optional(),
-  extra: z.record(z.unknown()).optional(),
-};
-
-const GetOrdersInput = z.object({
-  ...BaseInput,
-  load_full: z.boolean().optional(),
-  is_summarize: z.boolean().optional(),
+  size: z.number().int().positive().max(1000).optional(),
 });
 
-const GetOrdersNormalizedInput = z.object({
-  ...BaseInput,
-  paginate: z.boolean().optional(),
-  max_pages: z.number().int().positive().max(100).optional(),
-});
+const FILTER_DESCRIPTION =
+  "Filter object — CÙNG schema get_orders (apply_es_filter). Keys phổ biến: " +
+  "search: keyword (string[]), order_ids (number[]); status: statuses " +
+  "(string[] — new/confirmed/printed/packing/pending/shipped/delivered/" +
+  "returning/returned/cancel), sub_status; date range (dynamic theo time_key): " +
+  "time_key (vd 'inserted_at'/'updated_at'/'assign_sale_at'/'picked_up_at'/" +
+  "'send_to_partner_at'/'delivered_at'/'first_assign_sale_at'), " +
+  "'<time_key>:ranges' = { since, until } dạng ISO 'YYYY-MM-DDTHH:MM:SS' theo " +
+  "GIỜ LOCAL (của user nếu truyền `timezone`, không thì giờ của country): MCP tự " +
+  "quy đổi sang UTC trước khi gọi BE (giống web). KHÔNG dùng unix epoch (BE " +
+  "silently trả rỗng). Nếu tự thêm hậu tố 'Z'/offset thì coi là absolute, MCP " +
+  "không shift nữa. Advance filter — value PHẢI là enum FE accept, KHÔNG " +
+  "free-form: shop_id (number | 'no_shop'); partner_id (number | 'no_courier'); " +
+  "service_types (string); tags (number[] | 'no_tag', kèm is_exclude_tags); " +
+  "total_quantity (number); cod ('no_cod' | 'has_cod' | " +
+  "'<eq|gt_or_eq|lt_or_eq>_<amount>'); is_duplicated_phone/is_duplicated_ip " +
+  "(boolean); courier_reconciliation_status ('importing'|'courier_reconciling'|" +
+  "'courier_reconciled'|'courier_not_yet_reconciled'); " +
+  "customer_reconciliation_status ('new'|'sent_email'|'reconciled'|'processing'|" +
+  "'completed'|'done'|'customer_not_yet_reconciled'); assigning_sale_id/" +
+  "assigning_care_id (number | 'no_user' | 'has_user'); waybill_number " +
+  "('no_waybill_number' | 'matched_waybill_number'); order_source " +
+  "('non_marketplace'|'-3' shopee|'-4' lazada|'-9' tiktok); pending_reason_id " +
+  "(number | -1); cancel_reason_id (number | -2); shift " +
+  "('morning'|'afternoon'|'evening'); category_id (number | 'no_category'); " +
+  "business_countries_ids (country_code | 'no_business_countries'); " +
+  "saved_filter_id, slot_warehouse_id, combo_product, delivery_address_id " +
+  "(number). Exclude: key + is_exclude_<key>: true.";
 
 const COMMON_PROPERTIES = {
   country_code: {
@@ -53,112 +81,74 @@ const COMMON_PROPERTIES = {
       "Base URL (gồm scheme). Stdio mode: override env SEA_FULFILLMENT_HOST. " +
       "Http/remote mode: BỎ QUA — host đã cố định theo session OAuth.",
   },
-  filter: {
-    type: "object",
+  filter: { type: "object", description: FILTER_DESCRIPTION },
+  group_by: {
+    type: ["string", "array"],
+    items: { type: "string", enum: [...GROUP_FIELDS] },
     description:
-      "Filter object — keys phổ biến: " +
-      "pagination: page, page_size; search: keyword (string[]), order_ids " +
-      "(number[]); status: statuses (string[] — new/confirmed/printed/" +
-      "packing/pending/shipped/delivered/returning/returned/cancel), " +
-      "sub_status, printed_count, processing_count; date range (dynamic " +
-      "theo time_key): time_key (vd 'inserted_at'/'updated_at'/" +
-      "'assign_sale_at'/'picked_up_at'/'send_to_partner_at'/" +
-      "'delivered_at'/'first_assign_sale_at'), '<time_key>:ranges' = " +
-      "{ since, until } dạng ISO 'YYYY-MM-DDTHH:MM:SS' theo GIỜ LOCAL " +
-      "(của user nếu truyền `timezone`, không thì giờ của country): MCP tự " +
-      "quy đổi sang UTC trước khi gọi BE (giống web). KHÔNG dùng unix epoch (BE " +
-      "silently trả []). Nếu tự thêm hậu tố 'Z'/offset thì coi là " +
-      "absolute, MCP không shift nữa. '<time_key>:editor_ids' (number[]); advance filter — value " +
-      "PHẢI là enum FE accept, KHÔNG free-form: shop_id (number | " +
-      "'no_shop'); partner_id (number | 'no_courier'); service_types " +
-      "(string từ ffmSettings); tags (number[] | 'no_tag', kèm " +
-      "is_exclude_tags); total_quantity (number); cod ('no_cod' | " +
-      "'has_cod' | '<eq|gt_or_eq|lt_or_eq>_<amount>'); " +
-      "is_duplicated_phone/is_duplicated_ip (boolean true/false); " +
-      "courier_reconciliation_status ('importing'|'courier_reconciling'|" +
-      "'courier_reconciled'|'courier_not_yet_reconciled'); " +
-      "customer_reconciliation_status ('new'|'sent_email'|'reconciled'|" +
-      "'processing'|'completed'|'done'|'customer_not_yet_reconciled'); " +
-      "assigning_sale_id/assigning_care_id (number | 'no_user' | " +
-      "'has_user'); waybill_number ('no_waybill_number' | " +
-      "'matched_waybill_number' — KHÔNG phải tracking string); " +
-      "order_source ('non_marketplace'|'-3' shopee|'-4' lazada|'-9' " +
-      "tiktok); pending_reason_id (number | -1); cancel_reason_id " +
-      "(number | -2); shift ('morning'|'afternoon'|'evening'); " +
-      "category_id (number | 'no_category'); business_countries_ids " +
-      "(country_code | 'no_business_countries'); saved_filter_id, " +
-      "slot_warehouse_id, combo_product, delivery_address_id (number). " +
-      "Exclude: key + is_exclude_<key>: true. Sort: dùng `extra` — " +
-      "{ sort_by, sort_direction:'asc'|'desc' }.",
+      "Chiều gom nhóm (tối đa 2). Hợp lệ: " +
+      GROUP_FIELDS.join(" | ") +
+      ". Rỗng/bỏ trống → chỉ trả tổng (totals). 'date' PHẢI đứng một mình " +
+      "(histogram) — kèm chiều khác thì BE chỉ giữ date. VD ['status'] hoặc " +
+      "['status','shop_id'] (cross-tab).",
+  },
+  metrics: {
+    type: "array",
+    items: { type: "string", enum: [...METRIC_KEYS] },
+    description:
+      "Field số cần sum. Default ['cod']. Số đơn (count) LUÔN có sẵn không cần " +
+      "khai. Billing: cod, transfer_money, shipping_fee, discount, surcharge, " +
+      "extra_price, total_quantity. Reconciliation (phẳng từ order_partners): " +
+      "courier_*/customer_* của shipping_fee/shipping_fee_tax/cod_fee/cod_fee_tax/" +
+      "insurance_fee/return_fee/return_fee_tax/ffm_fee/total_fee. Tiền được scale " +
+      "sẵn theo currency (recon PH dùng PHP100 → /100).",
+  },
+  time_key: {
+    type: "string",
+    enum: [...DATE_FIELD_KEYS],
+    description:
+      "Khi group_by chứa 'date': mốc timestamp để bucket (default updated_at). " +
+      DATE_FIELD_KEYS.join(" | ") + ".",
+  },
+  interval: {
+    type: "string",
+    enum: ["day", "week", "month"],
+    description: "Khi group_by chứa 'date': kích thước bucket histogram (default day).",
   },
   timezone: {
     type: ["number", "string"],
     description:
-      "LUÔN truyền khi filter có date range (`*:ranges`). Offset giờ local " +
-      "của USER — suy ra từ giờ/locale hiện tại của user (vd VN/TH → 7, " +
-      "PH/SG/MY → 8; cũng nhận '+07:00'). Đây là offset của các mốc since/until " +
-      "bạn điền: MCP sẽ convert local→UTC trước khi gọi BE (giống web dùng TZ " +
-      "trình duyệt). CHỈ bỏ qua khi hoàn toàn không xác định được giờ user — " +
-      "khi đó fallback timezone của country_code (có thể lệch ranh giới ngày).",
+      "Offset giờ local của USER — suy ra từ giờ/locale hiện tại (vd VN/TH → 7, " +
+      "PH/SG/MY → 8; cũng nhận '+07:00'). Dùng CHO 2 việc: (1) convert since/until " +
+      "trong filter `*:ranges` local→UTC trước khi gọi BE; (2) time_zone cho " +
+      "date_histogram khi group_by 'date'. LUÔN truyền khi có date range hoặc " +
+      "group_by date. Thiếu → fallback timezone của country_code (có thể lệch " +
+      "ranh giới ngày).",
   },
-  page: { type: "number" },
-  page_size: { type: "number" },
-  extra: { type: "object", description: "Param phụ merge vào body request." },
+  size: {
+    type: "number",
+    description: "Số bucket tối đa cho MỖI tầng terms agg (default 100, cap 1000).",
+  },
 };
 
 export const TOOL_DEFS = [
   {
-    name: "get_orders",
+    name: "order_statistics",
     description:
-      "Lấy đơn hàng sea-fulfillment (FFM) — trả RAW response BE " +
-      "(POST /api/orders/get_orders). Dùng khi cần dữ liệu thô hoặc field " +
-      "BE chưa normalize. Nếu user muốn LIỆT KÊ / XUẤT BẢNG / EXCEL đơn " +
-      "thì ưu tiên get_orders_normalized. BẮT BUỘC truyền country_code " +
-      "(phone-code: 63=PH, 66=TH, 60=MY, 62=ID, 65=SG). Khi lọc theo " +
-      "khoảng thời gian (filter `*:ranges`) BẮT BUỘC kèm `timezone` theo " +
-      "giờ local của user.",
+      "Thống kê dữ liệu đơn hàng sea-fulfillment (FFM) qua ES aggregation " +
+      "(POST /api/orders/statistics) — chính là 'Order Data Statistics manual " +
+      "query (No AI)' trên web. Trả count tổng + số liệu group-by (KHÔNG trả full " +
+      "order doc). Dùng khi user muốn ĐẾM / TỔNG HỢP / BÁO CÁO theo nhóm (vd 'đếm " +
+      "đơn theo trạng thái', 'tổng COD theo shop tháng này', 'số đơn giao mỗi ngày " +
+      "7 ngày qua'). Cấu hình: filter (lọc, cùng schema get_orders) + group_by " +
+      "(tối đa 2 chiều, 'date' đứng riêng) + metrics (field số cần sum). Kết quả " +
+      "đã decorate: nhãn người đọc (status text, shop name, marketplace) + tiền tệ " +
+      "scale sẵn. BẮT BUỘC country_code (63=PH, 66=TH, 60=MY, 62=ID, 65=SG). Khi " +
+      "lọc/gom theo thời gian BẮT BUỘC kèm `timezone` theo giờ local của user.",
     inputSchema: {
       type: "object",
       required: ["country_code"],
-      properties: {
-        ...COMMON_PROPERTIES,
-        load_full: {
-          type: "boolean",
-          description:
-            "Nếu true → BE trả full order schema (cần cho normalize).",
-        },
-        is_summarize: { type: "boolean" },
-      },
-    },
-  },
-  {
-    name: "get_orders_normalized",
-    description:
-      "Lấy đơn hàng FFM đã NORMALIZE — dùng khi user muốn liệt kê, xuất " +
-      "bảng, hoặc xuất Excel đơn hàng. Tự bật load_full=true, gọi BE rồi " +
-      "normalize theo logic export Excel của FE. Trả mảng order phẳng: " +
-      "display_id, status (text), customer_name, phone_number, " +
-      "full_address, total_quantity, weight, tracking_number, " +
-      "partner_name, cod, total_price (đã chia /100 theo currency), shop, " +
-      "send_to_partner_at, shipped_at, completed_at, " +
-      "courier_*/customer_* reconciliation, tags, service_types, … Bật " +
-      "paginate=true để loop hết các trang. BẮT BUỘC country_code. Khi lọc " +
-      "theo khoảng thời gian (filter `*:ranges`) BẮT BUỘC kèm `timezone` " +
-      "theo giờ local của user.",
-    inputSchema: {
-      type: "object",
-      required: ["country_code"],
-      properties: {
-        ...COMMON_PROPERTIES,
-        paginate: {
-          type: "boolean",
-          description: "true → fetch toàn bộ pages (cap by max_pages).",
-        },
-        max_pages: {
-          type: "number",
-          description: "Trần số page khi paginate=true, default 20.",
-        },
-      },
+      properties: { ...COMMON_PROPERTIES },
     },
   },
 ];
@@ -181,75 +171,34 @@ export async function handleToolCall(
 ): Promise<ToolResult> {
   try {
     switch (name) {
-      case "get_orders": {
-        const args = GetOrdersInput.parse(rawArgs ?? {});
-        const ctx = {
-          host: binding.host,
-          countryCode: args.country_code,
-          auth: binding.auth,
-        };
-        const offset = resolveUtcOffset(args.timezone, args.country_code);
-        const params: Record<string, unknown> = {
-          ...(args.extra ?? {}),
-          filter: localRangesToUtc(args.filter ?? {}, offset) ?? {},
-        };
-        if (args.page != null) params.page = args.page;
-        if (args.page_size != null) params.page_size = args.page_size;
-        if (args.load_full != null) params.load_full = args.load_full;
-        if (args.is_summarize != null) params.is_summarize = args.is_summarize;
-
-        const data = await callGetOrders(ctx, params);
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-        };
-      }
-
-      case "get_orders_normalized": {
-        const args = GetOrdersNormalizedInput.parse(rawArgs ?? {});
+      case "order_statistics": {
+        const args = StatisticsInput.parse(rawArgs ?? {});
         const country = args.country_code;
         const ctx = { host: binding.host, countryCode: country, auth: binding.auth };
+
         const offset = resolveUtcOffset(args.timezone, country);
-        const filter = localRangesToUtc(args.filter ?? {}, offset);
+        const filter = localRangesToUtc(args.filter ?? {}, offset) ?? {};
 
-        let orders: Record<string, any>[];
-        let pagination: Record<string, unknown> | null = null;
+        const payload: Record<string, unknown> = { filter };
+        if (args.group_by != null) payload.group_by = args.group_by;
+        if (args.metrics?.length) payload.metrics = args.metrics;
+        if (args.time_key) payload.time_key = args.time_key;
+        if (args.interval) payload.interval = args.interval;
+        if (args.size != null) payload.size = args.size;
+        // ES date_histogram time_zone — BE bỏ qua nếu không group_by date.
+        payload.timezone = esOffsetString(offset);
 
-        if (args.paginate) {
-          orders = (await fetchAllOrders(ctx, {
-            filter,
-            pageSize: args.page_size,
-            maxPages: args.max_pages,
-            extraParams: args.extra,
-          })) as Record<string, any>[];
-        } else {
-          const params: Record<string, unknown> = {
-            ...(args.extra ?? {}),
-            filter,
-            page: args.page ?? 1,
-            page_size: args.page_size ?? 50,
-            load_full: true,
-          };
-          const data = await callGetOrders(ctx, params);
-          orders = Array.isArray(data?.data)
-            ? (data.data as Record<string, any>[])
-            : [];
-          pagination = {
-            page: data?.page,
-            page_size: data?.page_size,
-            total: data?.total,
-            total_pages: data?.total_pages,
-          };
-        }
+        const data = await callStatistics(ctx, payload);
 
-        const normalized = normalizeOrders(orders, { countryCode: country });
-        const payload = {
-          country_code: country,
-          count: normalized.length,
-          pagination,
-          orders: normalized,
-        };
+        // Resolve tên shop khi (và chỉ khi) BE thực sự group theo shop_id.
+        const dims = Array.isArray(data.group_by) ? data.group_by : [];
+        const shopsById = dims.includes("shop_id")
+          ? Object.fromEntries((await fetchShops(ctx)).map((s) => [String(s.id), s]))
+          : {};
+
+        const decorated = decorateStatistics(data, { countryCode: country, shopsById });
         return {
-          content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(decorated, null, 2) }],
         };
       }
 
@@ -274,7 +223,7 @@ export type ResolveAuth = (
 
 export function buildServer(resolveAuth: ResolveAuth): Server {
   const server = new Server(
-    { name: "ffm-mcp", version: "0.3.0" },
+    { name: "ffm-mcp", version: "0.4.0" },
     { capabilities: { tools: {} } },
   );
 

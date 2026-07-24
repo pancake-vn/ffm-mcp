@@ -1,6 +1,6 @@
 {
   "name": "ffm-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server cho sea-fulfillment: stdio (login username/password) + remote HTTP/OAuth. Gọi /orders/get_orders, normalize order theo các field OrderExportExcel.js dùng để export Excel.",
   "type": "module",
   "bin": {

@@ -1,13 +1,16 @@
 # ffm-mcp
 
 MCP server cho **sea-fulfillment** (Pancake FFM). Cắm vào trợ lý AI (Claude
-Desktop, Claude Code, Cursor, …) để hỏi và lấy dữ liệu đơn hàng bằng lời
+Desktop, Claude Code, Cursor, …) để **thống kê dữ liệu đơn hàng** bằng lời
 nói bình thường — không cần viết code.
 
 Server tự đăng nhập bằng `username` + `password`, gọi API
-`POST /api/orders/get_orders`, và **normalize** order theo đúng các trường
-FE dùng để export Excel (`OrderExportExcel.formatData`) — trả ra object
-phẳng dễ đọc, dễ xuất bảng.
+`POST /api/orders/statistics` — đúng endpoint của trang **"Order Data
+Statistics manual query (No AI)"** trên web. Trả về **số liệu tổng hợp**
+(đếm đơn + tổng theo nhóm), KHÔNG trả full order doc: gom nhóm theo trạng
+thái / shop / marketplace / ngày, tổng các field số (COD, phí đối soát, …).
+Kết quả được **decorate** sẵn — nhãn người đọc (status text, tên shop,
+marketplace) + tiền tệ scale đúng currency.
 
 > **Đi nhanh:** [§1 Chuẩn bị](#1-chuẩn-bị) → [§2 Thông tin đăng
 > nhập](#2-thông-tin-đăng-nhập) → [§3 Cắm vào AI client](#3-cắm-vào-ai-client)
@@ -138,7 +141,7 @@ claude mcp list
 ```
 
 Trong session, gõ `/mcp` để xem trạng thái. Tool xuất hiện là
-`mcp__ffm__get_orders` và `mcp__ffm__get_orders_normalized`.
+`mcp__ffm__order_statistics`.
 
 ### 3.2. Claude Desktop (macOS / Windows)
 
@@ -250,12 +253,12 @@ trong mọi config ở trên.
 
 Mở một cuộc trò chuyện mới và gõ thử:
 
-> Liệt kê 5 đơn hàng gần nhất ở Philippines.
+> Đếm số đơn theo trạng thái ở Philippines.
 
-> Hôm nay có bao nhiêu đơn ở trạng thái shipped (PH)?
+> Tổng COD theo shop trong 30 ngày qua (PH), biểu đồ giúp tôi.
 
 Lần đầu gọi tool, client sẽ hỏi "có cho phép gọi tool này không?" → chọn
-**Allow**. Nếu danh sách đơn hoặc con số hiện ra là kết nối đã thành công —
+**Allow**. Nếu bảng số liệu tổng hợp hiện ra là kết nối đã thành công —
 từ đây bạn hỏi và ra lệnh bằng lời nói bình thường.
 
 ---
@@ -278,19 +281,19 @@ hành của bạn, không phải nhắc lại mỗi lần. Tạo Project mới, 
 
 ## Cách trả lời
 - Luôn trả lời bằng tiếng Việt, ngắn gọn, đi thẳng vào việc.
-- Khi liệt kê nhiều đơn, trình bày dạng bảng: mã đơn, khách, tracking,
-  partner, COD, trạng thái.
+- Khi báo cáo số liệu tổng hợp, trình bày dạng bảng: nhóm (label) + số đơn +
+  các metric tổng; kèm dòng tổng (totals) nếu có.
 - Ngày giờ theo dd/mm/yyyy.
 
 ## Nguyên tắc về dữ liệu
 - Luôn dùng số liệu thật lấy từ FFM, không ước lượng hay phỏng đoán.
-- Nếu không tìm thấy dữ liệu, nói rõ "không có dữ liệu" — không tự bịa.
-- Khi lọc theo khoảng thời gian, hỏi lại tôi mốc since/until nếu chưa rõ.
+- Nếu không có bucket nào, nói rõ "không có dữ liệu" — không tự bịa.
+- Khi lọc/gom theo khoảng thời gian, hỏi lại tôi mốc since/until nếu chưa rõ.
 
 ## Khi báo cáo
 - Nêu rõ khoảng thời gian và country_code của số liệu đang báo cáo.
-- Số tiền đã được normalize sẵn (chia /100 nếu cần) — báo nguyên giá trị
-  trả về, không tự nhân/chia thêm.
+- Số tiền đã được scale sẵn theo currency (trường `currencies` trong kết quả)
+  — báo nguyên giá trị trả về, không tự nhân/chia thêm.
 ```
 
 ---
@@ -300,55 +303,64 @@ hành của bạn, không phải nhắc lại mỗi lần. Tạo Project mới, 
 Câu lệnh copy-paste sẵn cho các tình huống hay gặp. Thay phần trong ngoặc
 vuông, AI sẽ tự dịch sang tham số tool tương ứng.
 
-**Liệt kê đơn theo trạng thái:**
+**Đếm đơn theo trạng thái:**
 
-> Liệt kê đơn ở trạng thái [shipped] tại [Philippines] trong [7 ngày qua],
-> sắp xếp mới nhất lên đầu, hiện mã đơn, khách, tracking, partner, COD.
+> Đếm số đơn theo trạng thái ở [Philippines].
 
-**Xuất Excel:**
+**Tổng COD theo shop:**
 
-> Lấy toàn bộ đơn [đã giao] ở [PH] trong [tháng 4] và xuất ra bảng đầy đủ
-> các trường để tôi copy sang Excel.
+> Tổng COD theo shop trong [30 ngày qua] ở [PH], sắp theo COD giảm dần.
 
-**Lọc theo COD:**
+**Số đơn mỗi ngày (histogram):**
 
-> Có bao nhiêu đơn COD trên [500000] chưa đối soát với courier ở [PH]?
+> Số đơn tạo mỗi ngày trong [7 ngày qua] ở [PH] (gom theo ngày, dùng
+> inserted_at).
+
+**Cross-tab (2 chiều):**
+
+> Đếm đơn theo trạng thái × shop trong [tháng này] ở [PH].
 
 **Đối soát:**
 
-> Liệt kê đơn có customer_reconciliation_status = [reconciled] trong
-> [30 ngày qua] ở [PH], tổng COD bao nhiêu?
+> Tổng phí đối soát courier (courier_total_fee) theo shop ở [PH] trong
+> [30 ngày qua], kèm số đơn mỗi shop.
 
-**Tra cứu 1 đơn:**
+**Lọc rồi tổng hợp:**
 
-> Cho tôi trạng thái và lịch sử xử lý của đơn [mã đơn / SĐT khách] ở [PH].
+> Trong các đơn COD trên [500000] chưa đối soát courier ở [PH], đếm theo
+> trạng thái và tổng COD.
 
-**Lọc theo shop / partner:**
-
-> Đơn của shop [1234] giao qua partner [tên/ID] trong [tuần này] có bao
-> nhiêu, tổng giá trị?
+> Đơn của shop [1234] trong [tuần này] ở [PH] — tổng số đơn và tổng COD.
 
 ---
 
 ## 7. Tools (tham khảo)
 
-### `get_orders`
+MCP chỉ có **1 tool**: `order_statistics` (POST `/api/orders/statistics`) — thống
+kê tổng hợp, KHÔNG list/xuất từng đơn.
 
-Pass-through tới BE — trả raw response (`data`, `page`, `total_pages`, …).
-Dùng khi cần dữ liệu thô / field BE chưa được normalize.
+### `order_statistics`
+
+Gom nhóm + tổng hợp qua ES aggregation, trả count tổng + số liệu per-nhóm (KHÔNG
+trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo session (multi-tenant).
 
 | field | type | note |
 |---|---|---|
 | `country_code` | **string** (bắt buộc) | Phone-code (`"63"`, `"66"`…). Xem §2.3. |
 | `host` | string? | override env `SEA_FULFILLMENT_HOST`. |
-| `filter` | object? | object chứa filter keys — xem §7.1. |
-| `page` | number? | pagination (1-based). |
-| `page_size` | number? | default FE 30 (table) / 500 (export). Max ~2000. |
-| `load_full` | boolean? | true → BE trả full order schema. Cần cho normalize. |
-| `is_summarize` | boolean? | true → BE chỉ trả `id` + counters. |
-| `extra` | object? | merge vào body request (vd `sort_by`, `sort_direction`). |
+| `filter` | object? | Lọc đơn TRƯỚC khi tổng hợp — cùng schema `apply_es_filter` của get_orders. Xem §7.1. |
+| `group_by` | string \| string[]? | Chiều gom nhóm (tối đa 2): `status` \| `sub_status` \| `order_source` \| `shop_id` \| `date`. Rỗng → chỉ trả tổng. `date` PHẢI đứng một mình (histogram). VD `["status","shop_id"]`. |
+| `metrics` | string[]? | Field số cần sum. Default `["cod"]`. Số đơn (count) luôn có sẵn. Xem §7.2. |
+| `time_key` | string? | Khi `group_by` chứa `date`: mốc timestamp để bucket (default `updated_at`). Enum như date-range filter. |
+| `interval` | string? | Khi `group_by` chứa `date`: `day` \| `week` \| `month` (default `day`). |
+| `timezone` | number \| string? | Offset giờ local của user (`7`, `8`, `"+07:00"`). Dùng để convert date-range filter local→UTC **và** làm `time_zone` cho histogram. LUÔN truyền khi có date range / group_by `date`. |
+| `size` | number? | Số bucket tối đa mỗi tầng terms (default 100, cap 1000). |
 
 #### 7.1. `filter` chi tiết
+
+> `filter` dùng chung schema với get_orders (`apply_es_filter`). Các key phân
+> trang (`page`, `page_size`) KHÔNG áp dụng cho statistics — số bucket điều
+> khiển bằng `size`, không phân trang.
 
 **Pagination + search:**
 
@@ -417,39 +429,43 @@ Dùng khi cần dữ liệu thô / field BE chưa được normalize.
 { "filter": { "statuses": ["shipped"] }, "extra": { "sort_by": "inserted_at", "sort_direction": "desc" } }
 ```
 
-### `get_orders_normalized`
+#### 7.2. `metrics` chi tiết
 
-Tự bật `load_full=true`, gọi BE, rồi chạy port của
-`OrderExportExcel.formatData`. Trả mảng order phẳng — dùng khi user muốn
-liệt kê / xuất bảng / Excel.
+Whitelist field số được phép sum (subset của `@statistic_metric_fields` BE).
+Số đơn (`count`) luôn có sẵn, không cần khai. Tiền được scale sẵn theo currency.
 
-Output gồm các trường: `id`, `display_id`, `status` (text), `shop`,
-`customer_name`, `phone_number`, `full_address`, `total_quantity`,
-`weight`, `tracking_number`, `partner_name`, `cod`, `total_price`,
-`send_to_partner_at`, `shipped_at`, `completed_at`,
-`courier_reconciliation_status`, `customer_reconciliation_status`, `tags`,
-`service_types`, … (tiền đã chia `/100` nếu currency không thuộc
-`INT_CURRENCY_LIST`; datetime trả ISO string).
+| Nhóm | Keys |
+|---|---|
+| Basic | `total_quantity` (không phải tiền → giữ nguyên) |
+| Billing | `cod`, `transfer_money`, `shipping_fee`, `discount`, `surcharge`, `extra_price` |
+| Courier reconciliation | `courier_<k>` với `<k>` ∈ `shipping_fee`, `shipping_fee_tax`, `cod_fee`, `cod_fee_tax`, `insurance_fee`, `return_fee`, `return_fee_tax`, `ffm_fee`, `total_fee` |
+| Customer reconciliation | `customer_<k>` (cùng list `<k>` như trên) |
 
-Input thêm so với `get_orders`:
+> Billing metric dùng currency của country; reconciliation metric dùng
+> reconciliation currency (PH → `PHP100`, chia `/100`). Field `currencies`
+> trong kết quả cho biết currency đang áp cho từng nhóm.
 
-| field | type | note |
-|---|---|---|
-| `paginate` | boolean? | true → loop tới hết hoặc đạt `max_pages`. |
-| `max_pages` | number? | default 20. |
-
-Output:
+#### 7.3. Output
 
 ```json
 {
   "country_code": "63",
-  "count": 12,
-  "pagination": { "page": 1, "page_size": 50, "total": 12, "total_pages": 1 },
-  "orders": [ /* NormalizedOrder[] */ ]
+  "group_by": ["status"],
+  "metrics": ["cod"],
+  "currencies": { "billing": "PHP", "reconciliation": "PHP100" },
+  "total_entries": 1234,
+  "totals": { "cod": 5678900 },
+  "buckets": [
+    { "labels": ["Delivered"], "keys": ["delivered"], "count": 800, "values": { "cod": 4000000 } },
+    { "labels": ["Canceled"],  "keys": ["cancel"],    "count": 120, "values": { "cod": 0 } }
+  ]
 }
 ```
 
-Khi `paginate=true`, `pagination` là `null` (đã gộp).
+- `labels` — nhãn người đọc mỗi chiều (status text, tên shop, marketplace,
+  ngày `YYYY-MM-DD`); `keys` — raw key tương ứng (dùng khi cần id gốc).
+- `values` / `totals` — tiền đã scale theo currency (không chia thêm).
+- Khi `group_by` chứa `date`, output kèm `time_key` + `interval` đã dùng.
 
 ---
 
@@ -460,8 +476,8 @@ Khi `paginate=true`, `pagination` là `null` (đã gộp).
 | `Missing credentials` | Chưa set `SEA_FULFILLMENT_USERNAME` / `SEA_FULFILLMENT_PASSWORD`. Xem §2. |
 | `Missing host` | Chưa set `SEA_FULFILLMENT_HOST`. Xem §2.2. |
 | `login failed: Wrong username or password` | Sai mật khẩu, hoặc login sai tenant (host không khớp). |
-| `get_orders HTTP 401` | Token bị revoke giữa chừng (đổi password / force logout). Server đã auto-retry; nếu vẫn fail, kiểm tra password env. |
-| `get_orders HTTP 403` | Token đúng nhưng `country_code` không thuộc nước user được phép. |
+| `statistics HTTP 401` | Token bị revoke giữa chừng (đổi password / force logout). Server đã auto-retry; nếu vẫn fail, kiểm tra password env. |
+| `statistics HTTP 403` | Token đúng nhưng `country_code` không thuộc nước user được phép. |
 | Tool không xuất hiện | `claude mcp list` xem status. `npx` báo lỗi → xem gotcha PATH ở §3.2. |
 | `command not found: npx` (Claude Desktop macOS) | App GUI không có PATH của shell — dùng đường dẫn tuyệt đối tới `npx` + set `PATH` trong `env`. Xem §3.2. |
 | Server log `0_VN_orders_alias` | Truyền `country_code=VN/84` — sai. Phải là `63 / 66 / 60 / 62 / 65`. |
@@ -487,10 +503,11 @@ Cấu trúc:
 - `src/http.ts` — remote entry: Express + OAuth (`mcpAuthRouter`) + Streamable HTTP.
 - `src/oauth-provider.ts` — `OAuthServerProvider` bọc login FFM + trang Authorize.
 - `src/token.ts` — session JWT tự ký (HMAC) nhúng JWT FFM + host.
-- `src/tools.ts` — tool defs + `buildServer` + `handleToolCall` (dùng chung 2 entry).
-- `src/api.ts` — HTTP client (`callGetOrders`/`fetchAllOrders`, auth password|token).
-- `src/normalize.ts` — port `OrderExportExcel.formatData`.
-- `src/constants.ts` — `SUPPORTED_COUNTRIES`, `SUPPORTED_HOSTS`, currency map…
+- `src/tools.ts` — tool def `order_statistics` + `buildServer` + `handleToolCall` (dùng chung 2 entry).
+- `src/api.ts` — HTTP client (`callStatistics`/`fetchShops`, auth password|token).
+- `src/statistics.ts` — decorate response statistics (nhãn người đọc + scale tiền tệ).
+- `src/filter.ts` — quy đổi date-range filter local→UTC + `esOffsetString` cho histogram.
+- `src/constants.ts` — `SUPPORTED_COUNTRIES`, `SUPPORTED_HOSTS`, `METRIC_DEFS`, currency map…
 
 ---
 
@@ -498,7 +515,7 @@ Cấu trúc:
 
 Cho phép cắm kiểu **"Add custom connector → dán URL → Authorize"** như Pancake POS:
 không cần Node trên máy user, đăng nhập 1 lần qua trình duyệt. Server là tầng trung
-gian gọi BE FFM (login + get_orders), **không sửa gì ở BE**.
+gian gọi BE FFM (login + statistics), **không sửa gì ở BE**.
 
 ### 10.1. Kết nối (end-user)
 

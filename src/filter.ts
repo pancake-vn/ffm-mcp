@@ -48,6 +48,11 @@ function offsetSuffix(hours: number): string {
   return `${sign}${pad2(h)}:${pad2(m)}`;
 }
 
+// Offset (giờ) → chuỗi "+HH:MM" cho ES date_histogram `time_zone` (statistics group_by date).
+export function esOffsetString(offsetHours: number): string {
+  return offsetSuffix(offsetHours);
+}
+
 // "YYYY-MM-DDTHH:MM:SS" (giờ local) hoặc absolute (có Z/offset) → naive UTC "YYYY-MM-DDTHH:MM:SS".
 function toUtcNaive(value: string, offsetHours: number): string {
   const s = String(value).trim();

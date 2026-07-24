@@ -1,7 +1,11 @@
-// Wrapper gọi POST /api/orders/get_orders với 2 kiểu auth:
+// Wrapper gọi API FFM với 2 kiểu auth:
 //   - password: tự login (auth.ts) + cache + retry re-login khi 401 (stdio mode).
 //   - token:    dùng JWT FFM có sẵn (http/OAuth mode); 401 → báo re-authorize
 //               vì không giữ password để re-login.
+//
+// Endpoint chính: POST /api/orders/statistics (Order Data Statistics — trả aggregation
+// group_by + metrics + totals, KHÔNG trả full order doc). Kèm GET /api/shops để resolve
+// shop_id → tên shop khi group_by theo shop.
 
 import { invalidateToken, resolveAccessToken } from "./auth.js";
 
@@ -22,12 +26,25 @@ export interface CallContext {
   auth: CallAuth;
 }
 
-export interface GetOrdersResponse {
-  page?: number;
-  page_size?: number;
-  total?: number;
-  total_pages?: number;
-  data?: unknown[];
+export interface StatisticsResponse {
+  total_entries?: number;
+  totals?: Record<string, number>;
+  group_by?: string[];
+  metrics?: string[];
+  buckets?: Array<{
+    keys: Array<{ key: unknown; key_as_string?: string }>;
+    count: number;
+    values: Record<string, number>;
+  }>;
+  time_key?: string;
+  interval?: string;
+  [k: string]: unknown;
+}
+
+export interface ShopLite {
+  id: number | string;
+  name?: string;
+  pos_shop_id?: string | number;
   [k: string]: unknown;
 }
 
@@ -36,56 +53,35 @@ async function resolveToken(ctx: CallContext): Promise<string> {
   return resolveAccessToken(ctx.host, ctx.auth.username, ctx.auth.password);
 }
 
-async function rawCall(
-  host: string,
-  accessToken: string,
-  countryCode: string,
-  params: Record<string, unknown>,
-): Promise<GetOrdersResponse> {
-  const base = host.replace(/\/+$/, "");
-  const url =
-    `${base}/api/orders/get_orders` +
-    `?access_token=${encodeURIComponent(accessToken)}` +
-    `&country_code=${encodeURIComponent(countryCode)}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params ?? {}),
-  });
-
+// Đọc envelope { success, data, message } của BE. BE đôi khi trả 200 + success:false
+// cho auth failures → heuristic message chứa "auth"/"token"/"login"/"unauthorized" ⇒ 401.
+async function readEnvelope(res: Response, label: string): Promise<any> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new HttpError(res.status, body);
   }
-
   const json = (await res.json()) as {
     success?: boolean;
-    data?: GetOrdersResponse;
+    data?: unknown;
     message?: string;
   };
   if (json?.success === false) {
-    // BE đôi khi trả 200 + success:false cho auth failures.
-    // Heuristic: message chứa "auth" / "token" / "login" / "unauthorized" → coi như 401.
     const msg = json.message || "";
-    if (/auth|token|login|unauthor/i.test(msg)) {
-      throw new HttpError(401, msg);
-    }
-    throw new Error(
-      `get_orders failed: ${msg || JSON.stringify(json).slice(0, 300)}`,
-    );
+    if (/auth|token|login|unauthor/i.test(msg)) throw new HttpError(401, msg);
+    throw new Error(`${label} failed: ${msg || JSON.stringify(json).slice(0, 300)}`);
   }
-  return (json?.data ?? {}) as GetOrdersResponse;
+  return json?.data ?? {};
 }
 
-export async function callGetOrders(
+// Gọi 1 request đã auth; nếu 401 và auth=password thì force re-login + retry 1 lần.
+async function withAuthRetry<T>(
   ctx: CallContext,
-  params: Record<string, unknown>,
-): Promise<GetOrdersResponse> {
-  if (!ctx.host) throw new Error("callGetOrders: host is required");
+  doCall: (token: string) => Promise<T>,
+): Promise<T> {
+  if (!ctx.host) throw new Error("host is required");
   const token = await resolveToken(ctx);
   try {
-    return await rawCall(ctx.host, token, ctx.countryCode, params);
+    return await doCall(token);
   } catch (err) {
     if (err instanceof HttpError && err.status === 401) {
       if (ctx.auth.kind === "password") {
@@ -97,7 +93,7 @@ export async function callGetOrders(
           ctx.auth.password,
           { force: true },
         );
-        return await rawCall(ctx.host, fresh, ctx.countryCode, params);
+        return await doCall(fresh);
       }
       // token mode: không có password để re-login → yêu cầu user authorize lại.
       throw new HttpError(
@@ -109,32 +105,59 @@ export async function callGetOrders(
   }
 }
 
-export async function fetchAllOrders(
+async function rawStatistics(
+  host: string,
+  accessToken: string,
+  countryCode: string,
+  payload: Record<string, unknown>,
+): Promise<StatisticsResponse> {
+  const base = host.replace(/\/+$/, "");
+  const url =
+    `${base}/api/orders/statistics` +
+    `?access_token=${encodeURIComponent(accessToken)}` +
+    `&country_code=${encodeURIComponent(countryCode)}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  });
+  return (await readEnvelope(res, "statistics")) as StatisticsResponse;
+}
+
+export async function callStatistics(
   ctx: CallContext,
-  opts: {
-    filter?: Record<string, unknown>;
-    pageSize?: number;
-    maxPages?: number;
-    extraParams?: Record<string, unknown>;
-  },
-): Promise<unknown[]> {
-  const pageSize = opts.pageSize ?? 500;
-  const maxPages = opts.maxPages ?? 20;
-  const collected: unknown[] = [];
-  let page = 1;
-  while (page <= maxPages) {
-    const res = await callGetOrders(ctx, {
-      ...(opts.extraParams ?? {}),
-      filter: opts.filter ?? {},
-      page,
-      page_size: pageSize,
-      load_full: true,
-    });
-    const batch = Array.isArray(res?.data) ? (res.data as unknown[]) : [];
-    collected.push(...batch);
-    const totalPages = Number(res?.total_pages ?? 0);
-    if (!totalPages || page >= totalPages) break;
-    page += 1;
-  }
-  return collected;
+  payload: Record<string, unknown>,
+): Promise<StatisticsResponse> {
+  return withAuthRetry(ctx, (token) =>
+    rawStatistics(ctx.host, token, ctx.countryCode, payload),
+  );
+}
+
+async function rawShops(
+  host: string,
+  accessToken: string,
+  countryCode: string,
+): Promise<ShopLite[]> {
+  const base = host.replace(/\/+$/, "");
+  // is_show_all=true bắt buộc, nếu không /shops trả list partial (nhiều id miss).
+  const url =
+    `${base}/api/shops` +
+    `?access_token=${encodeURIComponent(accessToken)}` +
+    `&country_code=${encodeURIComponent(countryCode)}` +
+    `&is_available=false&is_show_all=true`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await readEnvelope(res, "shops");
+  return Array.isArray(data) ? (data as ShopLite[]) : [];
+}
+
+// Lấy toàn bộ shop (id → name) để resolve nhãn khi group_by theo shop_id.
+export async function fetchShops(ctx: CallContext): Promise<ShopLite[]> {
+  return withAuthRetry(ctx, (token) =>
+    rawShops(ctx.host, token, ctx.countryCode),
+  );
 }

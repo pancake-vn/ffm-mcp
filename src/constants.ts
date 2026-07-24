@@ -55,8 +55,15 @@ export const SUPPORTED_HOSTS: ReadonlyArray<{
   { hostname: "bigate.co", appId: 9, prefix: "BIG" },
 ];
 
-export function currencyByCountry(countryCode: string | undefined): string | undefined {
+// billing currency theo country; reconciliation currency của PH là "PHP100" (đồng bộ
+// sea-fulfillment-web utils/tools.js:223) — PHP100 KHÔNG thuộc INT_CURRENCY_LIST nên tiền
+// đối soát PH bị chia /100, khác billing PHP (integer, không chia).
+export function currencyByCountry(
+  countryCode: string | undefined,
+  isReconciliation = false,
+): string | undefined {
   if (!countryCode) return undefined;
+  if (isReconciliation && String(countryCode) === "63") return "PHP100";
   return SUPPORTED_COUNTRIES.find((c) => c.countryCode === String(countryCode))?.currency;
 }
 
@@ -95,21 +102,108 @@ export const ORDER_STATUS_TEXT: Record<string, string> = {
   cancel: "Canceled",
 };
 
-// reconciliationKeys tương ứng với utils/excel.js — dùng cho courier_* / customer_*.
-export const RECONCILIATION_KEYS: ReadonlyArray<string> = [
-  "shipping_fee",
-  "return_shipping_fee",
-  "cod",
-  "insurance_fee",
-  "vat",
-  "total",
+// sub_status là polymorphic: stock-match (matched/mismatched) + tiến trình đóng gói
+// (packingOrderStatus) + courier delivery sub-status (orderSubStatus). Đồng bộ FE
+// labelMaps.sub_status (order-data/index.js:236-243). Text tiếng Anh (default tab).
+export const SUB_STATUS_TEXT: Record<string, string> = {
+  matched: "Matched",
+  mismatched: "Mismatched",
+  // packingOrderStatus
+  to_pack: "To pack",
+  packing: "Packing",
+  on_hold: "On hold",
+  packed: "Packed",
+  handed_over: "Handed over",
+  // orderSubStatus (courier delivery)
+  picked_up: "Picked up",
+  processing_on_the_way: "Processing on the way",
+  on_the_way: "On the way",
+  out_for_delivery: "Out for delivery",
+  delay_delivery: "Delay delivery",
+  undeliverable: "Undeliverable",
+  inform_recipient: "Inform recipient",
+  contact_delivery_company: "Contact delivery company",
+  waiting_on_the_way: "Waiting on the way",
+  waiting_for_return: "Waiting for return",
+  import_returning_warehouse: "Import returning warehouse",
+  waiting_returning_transit: "Waiting returning transit",
+  returning: "Returning",
+  return_fail: "Return fail",
+  returning_fail: "Returning fail",
+  delivered: "Delivered",
+  delivered_cod: "Delivered COD",
+  returned: "Returned",
+  returned_cod: "Returned COD",
+};
+
+// order_source / marketplace_id → tên marketplace (sea-fulfillment-web utils/tools.js:1601).
+export const MARKETPLACE_SOURCE: Record<string, string> = {
+  "-3": "Shopee",
+  "-4": "Lazada",
+  "-9": "TikTok",
+};
+
+// group_by dimensions hợp lệ (khớp @statistic_group_fields BE). `date` chỉ dùng đơn.
+export const GROUP_FIELDS: ReadonlyArray<string> = [
+  "status",
+  "sub_status",
+  "order_source",
+  "shop_id",
+  "date",
+];
+export const GROUP_LABELS: Record<string, string> = {
+  status: "Status",
+  sub_status: "Sub status",
+  order_source: "Order source",
+  shop_id: "Shop",
+  date: "Date",
+};
+
+// Mốc thời gian cho group_by "date" / date-range filter (khớp @statistic_date_time_keys BE).
+export const DATE_FIELD_KEYS: ReadonlyArray<string> = [
+  "inserted_at",
+  "confirmed_at",
+  "send_to_partner_at",
+  "picked_up_at",
+  "delivered_at",
+  "assign_sale_at",
+  "first_assign_sale_at",
+  "assign_care_at",
+  "expected_receipt_date",
+  "updated_at",
 ];
 
-export const COUNTRY_HAD_COMMUNE_POSTCODE: ReadonlyArray<string> = [
-  "60",
-  "61",
-  "82",
-  "966",
-  "91",
-  "65",
+// Whitelist metric (đồng bộ @statistic_metric_fields BE order.ex:1441). money=true → format
+// theo currency; recon=true → dùng reconciliation currency (PHP100 với PH → /100).
+export interface MetricDef {
+  key: string;
+  label: string;
+  money: boolean;
+  recon?: boolean;
+}
+const RECON_KEYS: ReadonlyArray<[string, string]> = [
+  ["shipping_fee", "Shipping Fee"],
+  ["shipping_fee_tax", "Shipping Fee Tax"],
+  ["cod_fee", "COD Fee"],
+  ["cod_fee_tax", "COD Fee Tax"],
+  ["insurance_fee", "Insurance Fee"],
+  ["return_fee", "Return Fee"],
+  ["return_fee_tax", "Return Fee Tax"],
+  ["ffm_fee", "FFM Fee"],
+  ["total_fee", "Total Fee"],
 ];
+export const METRIC_DEFS: ReadonlyArray<MetricDef> = [
+  { key: "cod", label: "COD", money: true },
+  { key: "transfer_money", label: "Bank Transfer", money: true },
+  { key: "shipping_fee", label: "Shipping Fee", money: true },
+  { key: "discount", label: "Discount", money: true },
+  { key: "surcharge", label: "Surcharge", money: true },
+  { key: "extra_price", label: "Extra Price", money: true },
+  { key: "total_quantity", label: "Total Quantity", money: false },
+  ...RECON_KEYS.map(([k, l]) => ({ key: `courier_${k}`, label: `Courier ${l}`, money: true, recon: true })),
+  ...RECON_KEYS.map(([k, l]) => ({ key: `customer_${k}`, label: `Customer ${l}`, money: true, recon: true })),
+];
+export const METRIC_BY_KEY: Record<string, MetricDef> = Object.fromEntries(
+  METRIC_DEFS.map((m) => [m.key, m]),
+);
+export const METRIC_KEYS: ReadonlyArray<string> = METRIC_DEFS.map((m) => m.key);
