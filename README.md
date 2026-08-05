@@ -351,7 +351,7 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 | `filter` | object? | Lọc đơn TRƯỚC khi tổng hợp — cùng schema `apply_es_filter` của get_orders. Xem §7.1. |
 | `group_by` | string \| string[]? | Chiều gom nhóm (tối đa 2): `status` \| `sub_status` \| `order_source` \| `shop_id` \| `date`. Rỗng → chỉ trả tổng. `date` PHẢI đứng một mình (histogram). VD `["status","shop_id"]`. |
 | `metrics` | string[]? | Field số cần sum. Default `["cod"]`. Số đơn (count) luôn có sẵn. Xem §7.2. |
-| `time_key` | string? | Khi `group_by` chứa `date`: mốc timestamp để bucket (default `updated_at`). Enum như date-range filter. |
+| `time_key` | string? | Khi `group_by` chứa `date`: mốc timestamp để chia bucket (default `updated_at`). Nhận: `inserted_at`, `confirmed_at`, `send_to_partner_at`, `picked_up_at`, `delivered_at`, `assign_sale_at`, `first_assign_sale_at`, `assign_care_at`, `expected_receipt_date`, `updated_at`. ⚠️ Khác với `filter.time_key` (xem §7.1) — đây là tham số của tool, không nằm trong `filter`. |
 | `interval` | string? | Khi `group_by` chứa `date`: `day` \| `week` \| `month` (default `day`). |
 | `timezone` | number \| string? | Offset giờ local của user (`7`, `8`, `"+07:00"`). Dùng để hiểu date-range filter là giờ local nào (quy sang mốc UTC tuyệt đối) **và** làm `time_zone` cho histogram. LUÔN truyền khi có date range / group_by `date`. Xem cảnh báo ở §7.1. |
 | `size` | number? | Số bucket tối đa mỗi tầng terms (default 100, cap 1000). |
@@ -362,73 +362,104 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 > trang (`page`, `page_size`) KHÔNG áp dụng cho statistics — số bucket điều
 > khiển bằng `size`, không phân trang.
 
-**Pagination + search:**
+**Search:**
 
 | Key | Type | Note |
 |---|---|---|
-| `page` | number | 1-based |
-| `page_size` | number | default 30 ở FE table |
-| `keyword` | string[] | full-text search (display_id, phone, name, …) |
-| `order_ids` | number[] | filter list ID cụ thể (export flow) |
+| `keyword` | string[] | Tìm theo display_id, phone, tracking_number, platform_order_id, ip, note, note_print. **Tra 1 mã vận đơn / SĐT thì dùng khoá này** (không có khoá `tracking_number` / `phone_number`). |
+| `order_ids` | number[] | filter list order ID cụ thể |
 
 **Status / counter:**
 
 | Key | Type | Note |
 |---|---|---|
-| `status` | string[] | **Tên khoá là `status`, KHÔNG phải `statuses`.** `new`, `confirmed`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`, … |
-| `sub_status` | string | sub-status filter |
-| `printed_count` | string/number | vd `0` để lọc đơn chưa in |
-| `processing_count` | string/number | count đơn đang xử lý |
+| `status` | string[] | **Tên khoá là `status`, KHÔNG phải `statuses`.** `new`, `need_attention`, `waiting`, `need_confirm`, `sale_pending`, `confirmed`, `wait_print`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`. |
+| `sub_status` | string[] | sub-status (đóng gói / giao vận / khớp tồn) |
+| `printed_count` | string[] | `"0"` chưa in; `"gt_or_eq_2"`, `"lt_or_eq_1"` |
+| `processing_count` | string[] | cùng cú pháp `printed_count` |
 
-**Date range — dynamic key theo `time_key`:**
+**Pseudo-status (CHỈ có ở statistics)** — đặt **một mình** trong `status`, BE dịch sang
+truy vấn đặc biệt (`pop_pseudo_status`):
+
+| Giá trị | Ý nghĩa |
+|---|---|
+| `["confirmed_same_day"]` | Đơn tạo & confirm trong **cùng một ngày** (theo timezone user) |
+| `["canceled_after_confirm"]` | Đơn đang `cancel` nhưng **đã từng** `confirmed` (huỷ sau chốt) |
+
+**Khoảng thời gian — tên khoá là `<field>:ranges`:**
+
+Chọn mốc thời gian bằng **tên khoá**, không phải bằng `time_key`. `<field>` ∈
+`inserted_at`, `updated_at`, `confirmed_at`, `send_to_partner_at`, `picked_up_at`,
+`delivered_at`, `assign_sale_at`, `first_assign_sale_at`, `assign_care_at`,
+`expected_receipt_date`, `call_later_at`, `sla_due_at`, `order_status`.
 
 | Key | Type | Note |
 |---|---|---|
-| `time_key` | string | Field timestamp filter theo: `inserted_at`, `updated_at`, `assign_sale_at`, `picked_up_at`, `send_to_partner_at`, `delivered_at`, `first_assign_sale_at`. |
-| `<time_key>:ranges` | `{ since, until }` | ISO string `"YYYY-MM-DDTHH:MM:SS"` theo **giờ LOCAL** (giờ user nếu truyền param `timezone`, không thì giờ của `country_code` — vd `63` → PH UTC+8). MCP quy đổi sang **mốc UTC tuyệt đối có hậu tố `Z`** trước khi gọi BE (xem cảnh báo dưới bảng). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch — BE silently trả mảng rỗng. Nếu tự thêm hậu tố `Z`/offset thì coi là absolute, MCP không shift nữa. |
-| `timezone` | number \| string | Top-level (ngoài `filter`) — offset giờ của since/until: `7`, `8`, hoặc `"+07:00"`. **AI client nên LUÔN truyền khi filter có `*:ranges`**, theo giờ local của user. Thiếu → fallback timezone của `country_code` (có thể lệch ranh giới ngày). |
+| `<field>:ranges` | `{ since, until }` | ISO `"YYYY-MM-DDTHH:MM:SS"` theo **giờ LOCAL** của user (nếu truyền param `timezone`, không thì giờ của `country_code` — vd `63` → PH UTC+8). MCP quy sang **mốc UTC tuyệt đối có hậu tố `Z`** trước khi gọi BE (xem cảnh báo dưới). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch — BE silently trả rỗng. Tự thêm `Z`/offset thì coi là absolute, MCP không shift nữa. |
+| `<field>:editor_ids` | number[] | Lọc thêm theo user thao tác trong khoảng (`inserted_at`→creator_id, `updated_at`→last_editor_id, `send_to_partner_at`→send_to_partner_user_id, `order_status`→user trong status_histories). |
+| `time_key` | string | **KHÔNG phải để chọn field range.** Chỉ có 2 tác dụng: `"send_to_partner_at"` → thêm điều kiện đơn đã gửi partner; `"order_status:<status>"` → lọc đơn từng qua status đó. Muốn lọc khoảng ngày thì dùng `<field>:ranges` ở trên. |
 
-> ⚠️ **Vì sao phải gắn `Z`** (fix 2026-08-05): BE statistics tự gắn offset vào chuỗi
+> ⚠️ **Vì sao MCP gắn `Z`** (fix 2026-08-05): BE statistics tự gắn offset vào chuỗi
 > range **naive** theo `params["timezone"]` (`Services.EsV2.Order.normalize_range_timezone/2`,
 > commit `d3a66159`). Nếu client đã quy đổi local→UTC mà vẫn gửi chuỗi naive kèm
 > `timezone: "+08:00"` thì BE shift **lần thứ hai** → cửa sổ lệch đúng bằng offset
 > (PH/MY/SG +8 sai rõ, TH +7 may mắn ít lộ). MCP gửi mốc tuyệt đối có `Z` (BE giữ
 > nguyên) và **chỉ** gửi `timezone` xuống BE khi `group_by` chứa `date` — lúc đó nó
 > dùng cho `time_zone` của date_histogram.
-| `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
+>
+> `timezone` là param **top-level của tool** (ngoài `filter`): `7`, `8`, `"+07:00"`.
+> Nên LUÔN truyền khi filter có `*:ranges`. Thiếu → fallback timezone của
+> `country_code` (có thể lệch ranh giới ngày).
 
-**Advance filter** — mỗi key chỉ accept đúng enum dưới đây, KHÔNG free-form:
+**Advance filter — nhóm PHẢI LÀ MẢNG** (BE dựng `terms` / so `term == ["x"]`; gửi
+scalar ⇒ 0 đơn im lặng, MCP tự wrap giúp):
 
-| Key | Value | Label FE | Note |
-|---|---|---|---|
-| `shop_id` | `number[]` (**mảng**) hoặc `"no_shop"` | POS Shop / No Shop | shop_id từ Pancake POS. `13` (số lẻ) → BE dựng `terms` sai kiểu ⇒ **0 đơn, không báo lỗi**; phải là `[13]`. MCP tự wrap giúp. |
-| `partner_id` | `number` hoặc `"no_courier"` | Courier / No Courier | |
-| `service_types` | `string` | Service Type | Từ `ffmSettings` type `customer_service_type`, hoặc `"No Service Type"`. |
-| `tags` | `number[]` (tag ID) hoặc `"no_tag"` | Tag / No tag | include/exclude qua `is_exclude_tags`. |
-| `product_id` / `variation_id` | `number` | Product / Variation | |
-| `total_quantity` | `number` | Total Quantity | Number trực tiếp, không `{min,max}`. |
-| `cod` | `"no_cod"` / `"has_cod"` / `"<op>_<amount>"` | COD | `<op>` ∈ `eq` / `gt_or_eq` / `lt_or_eq`. VD `"gt_or_eq_50000"`. |
-| `is_duplicated_phone` | `true` / `false` | Duplicated Phone | boolean (KHÔNG phải string). |
-| `is_duplicated_ip` | `true` / `false` | Duplicated IP | boolean. |
-| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Courier Reconciliation Status | Value chứa `"not_yet"` → BE đảo thành must_not query. |
-| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Customer Reconciliation Status | Cùng logic `not_yet`. |
-| `assigning_sale_id` / `assigning_care_id` | `number` hoặc `"no_user"` / `"has_user"` | Assigning Sale/Care | |
-| `delivery_address_id` | `number` | Delivery Address | |
-| `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | No / Matched Waybill Number | **Enum, KHÔNG phải tracking string.** |
-| `combo_product` | `number` | Combo | |
-| `order_source` | `"non_marketplace"` / `"-3"` / `"-4"` / `"-9"` | Non-Marketplace / Shopee / Lazada / TikTok | |
-| `saved_filter_id` | `number` | Saved Filter | |
-| `slot_warehouse_id` | `number` | Warehouse | |
-| `pending_reason_id` | `number` hoặc `-1` | Pending Reason | `-1` = Other reason. |
-| `cancel_reason_id` | `number` hoặc `-2` | Cancel Reason | `-2` = Other reason. |
-| `shift` | `"morning"` / `"afternoon"` / `"evening"` | Shift | |
-| `category_id` | `number` hoặc `"no_category"` | Category | |
-| `business_countries_ids` | `string` (country_code) hoặc `"no_business_countries"` | Countries | |
+| Key | Value | Note |
+|---|---|---|
+| `shop_id` | `number[]` | `[13]` — KHÔNG phải `13`. |
+| `partner_id` | `number[]` hoặc `["no_courier"]` | Courier. |
+| `service_types` | `string[]` hoặc `["No Service Type"]` | Từ `ffmSettings` type `customer_service_type`. |
+| `include_tags` / `exclude_tags` | `string[]` = **TÊN tag**, kèm `"no_tag"` | ⚠️ **KHÔNG có khoá `tags`.** BE query `tags.name` nên phải gửi **tên**, không phải tag ID. `include_tags` gộp AND/OR qua `condition_include_tags` (`"and"`/`"or"`, mặc định `or`). |
+| `product_id` / `variation_id` | `number[]` | AND/OR qua `condition_product_id` / `condition_variation_id`. |
+| `combo_product` | `number[]` | Combo. |
+| `assigning_sale_id` / `assigning_care_id` | `number[]` hoặc `["no_user"]` / `["has_user"]` | Sale/Care phụ trách. |
+| `order_source` | `["non_marketplace"]` / `["-3"]` / `["-4"]` / `["-9"]` | Non-Marketplace / Shopee / Lazada / TikTok. Trộn được, vd `["non_marketplace","-3"]`. |
+| `total_quantity` | `number[]` | Số lượng chính xác, không `{min,max}`. |
+| `slot_warehouse_id` | `number[]` | Warehouse. |
+| `pending_reason_id` | `number[]` (hoặc `[-1]`) | `-1` = Other reason. |
+| `cancel_reason_id` | `number[]` (hoặc `[-2]`) | `-2` = Other reason. |
+| `marketplace_id` | `string[]` | Lọc thẳng theo sàn (tương đương `order_source` nhưng không có nhánh `non_marketplace`). |
+| `province_id` / `district_id` / `commune_id` | `number[]` | Địa chỉ giao (nested `shipping_info`). |
+| `display_id`, `platform_order_id`, `printed_count`, `processing_count`, `creator_id`, `last_editor_id`, `send_to_partner_user_id`, `call_later_status`, `ssc_id` | mảng | Map thẳng sang field cùng tên trong ES. |
+
+**Advance filter — nhóm SCALAR:**
+
+| Key | Value | Note |
+|---|---|---|
+| `cod` | `"no_cod"` / `"has_cod"` / `"<op>_<amount>"` | `<op>` ∈ `eq` / `gt_or_eq` / `lt_or_eq`. VD `"gt_or_eq_50000"`. |
+| `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | **Enum, KHÔNG phải mã vận đơn** — tra mã cụ thể thì dùng `keyword`. |
+| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Value chứa `"not_yet"` → BE đảo thành must_not. |
+| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Cùng logic `not_yet`. |
+| `is_duplicated_phone` / `is_duplicated_ip` | `true` / `false` | boolean (KHÔNG phải string). |
+| `need_attention_tags` | `string` (1 tên tag) | |
+| `sub_sale_pending_reason` | `number` | Map sang `pending_reason_id`. |
+| `no_address` / `no_detail_address` / `no_commune` | toggle | Đơn thiếu Tỉnh/Thành, địa chỉ chi tiết, Phường/Xã. |
+
+> ❌ **Các khoá KHÔNG tồn tại** trong ES order index — dùng sẽ ra **0 đơn im lặng**,
+> MCP chặn sẵn: `tags` (→ `include_tags`/`exclude_tags`), `category_id`, `shift`,
+> `saved_filter_id`, `business_countries_ids`, `delivery_address_id`,
+> `tracking_number`/`phone_number` (→ `keyword`).
 
 **Exclude:** thêm flag `is_exclude_<key>: true` để BE đảo `must` → `must_not`:
 
 ```json
-{ "filter": { "tags": [123], "is_exclude_tags": true } }
+{ "filter": { "partner_id": [7], "is_exclude_partner_id": true } }
+```
+
+Riêng tag thì exclude bằng khoá riêng, không phải cờ:
+
+```json
+{ "filter": { "exclude_tags": ["Hàng dễ vỡ"] } }
 ```
 
 > **Sort không áp dụng** cho statistics — kết quả là bucket tổng hợp, không phải danh
@@ -445,13 +476,19 @@ và trả về bình thường. Đây là loại lỗi nguy hiểm nhất vì **
 |---|---|---|
 | `filter.statuses: ["delivered"]` | **0 đơn**, im lặng | `filter.status: ["delivered"]` |
 | `filter.shop_id: 13` (số lẻ) | **0 đơn**, im lặng | `filter.shop_id: [13]` |
+| `filter.tags: [123]` | **0 đơn**, im lặng | `filter.include_tags: ["tên tag"]` |
+| `filter.tracking_number: "SPX…"` | **0 đơn**, im lặng | `filter.keyword: ["SPX…"]` |
 
-**MCP chặn sẵn giúp bạn:** khoá lạ → trả lỗi kèm gợi ý (``Khoá filter không hợp lệ:
-`statuses` (có phải `status`?)``); khoá dạng `terms` nhận số lẻ → tự wrap thành mảng.
-Các khoá dạng `terms` **phải là mảng**: `status`, `sub_status`, `shop_id`,
-`marketplace_id`, `tags`, `category_id`, `slot_warehouse_id`, `pending_reason_id`,
-`cancel_reason_id`, `shift`, `business_countries_ids`, `saved_filter_id`,
-`delivery_address_id`, `total_quantity`.
+**MCP chặn sẵn giúp bạn** — khoá lạ trả lỗi kèm cách sửa, vd:
+
+```
+Khoá filter không hợp lệ: `tags` → dùng `include_tags` / `exclude_tags`,
+giá trị là TÊN tag (BE query `tags.name`), KHÔNG phải tag ID
+```
+
+Khoá dạng danh sách nhận scalar thì MCP tự wrap thành mảng (`shop_id: 13` →
+`[13]`) nên không còn ra 0 đơn oan. Danh sách khoá đầy đủ theo nhóm xem 2 bảng
+Advance filter ở trên.
 
 > Việc BE tự validate và báo lỗi khi gặp khoá lạ là thay đổi phía `sea-fulfillment`
 > (dùng chung `apply_es_filter` với `get_orders` → blast radius toàn hệ thống), chưa

@@ -39,41 +39,46 @@ const StatisticsInput = z.object({
 });
 
 const FILTER_DESCRIPTION =
-  "Filter object — CÙNG schema get_orders (apply_es_filter). ⚠️ TÊN KHOÁ PHẢI " +
-  "CHÍNH XÁC: BE bỏ qua khoá lạ và trả 0 đơn mà KHÔNG báo lỗi (vd viết " +
-  "`statuses` thay vì `status` → 0 đơn, tưởng nhầm là kỳ đó không có đơn). MCP " +
-  "chặn khoá lạ và báo lỗi thay vì trả số sai. Khoá dạng terms (status, " +
-  "sub_status, shop_id, marketplace_id, tags, category_id, slot_warehouse_id, " +
-  "pending_reason_id, cancel_reason_id, shift, business_countries_ids, " +
-  "saved_filter_id, delivery_address_id, total_quantity) PHẢI là MẢNG — " +
-  "`shop_id: [13]` chứ KHÔNG phải `shop_id: 13` (MCP tự wrap giúp nếu lỡ gửi số lẻ). " +
-  "Keys phổ biến: search: keyword (string[]), order_ids (number[]); trạng thái: " +
-  "`status` (string[] — new/confirmed/printed/packing/pending/shipped/delivered/" +
-  "returning/returned/cancel — TÊN LÀ `status`, KHÔNG PHẢI `statuses`), " +
-  "sub_status (string[]); date range (dynamic theo time_key): " +
-  "time_key (vd 'inserted_at'/'updated_at'/'assign_sale_at'/'picked_up_at'/" +
-  "'send_to_partner_at'/'delivered_at'/'first_assign_sale_at'), " +
-  "'<time_key>:ranges' = { since, until } dạng ISO 'YYYY-MM-DDTHH:MM:SS' theo " +
-  "GIỜ LOCAL (của user nếu truyền `timezone`, không thì giờ của country): MCP tự " +
-  "quy đổi sang mốc UTC tuyệt đối (hậu tố 'Z') trước khi gọi BE. KHÔNG dùng unix " +
-  "epoch (BE silently trả rỗng). Nếu tự thêm hậu tố 'Z'/offset thì coi là absolute, " +
-  "MCP không shift nữa. Advance filter — value PHẢI là enum FE accept, KHÔNG " +
-  "free-form: shop_id (number[] — mảng, hoặc 'no_shop'); partner_id (number | " +
-  "'no_courier'); service_types (string); tags (number[] | 'no_tag', kèm is_exclude_tags); " +
-  "total_quantity (number); cod ('no_cod' | 'has_cod' | " +
-  "'<eq|gt_or_eq|lt_or_eq>_<amount>'); is_duplicated_phone/is_duplicated_ip " +
-  "(boolean); courier_reconciliation_status ('importing'|'courier_reconciling'|" +
-  "'courier_reconciled'|'courier_not_yet_reconciled'); " +
-  "customer_reconciliation_status ('new'|'sent_email'|'reconciled'|'processing'|" +
-  "'completed'|'done'|'customer_not_yet_reconciled'); assigning_sale_id/" +
-  "assigning_care_id (number | 'no_user' | 'has_user'); waybill_number " +
-  "('no_waybill_number' | 'matched_waybill_number'); order_source " +
-  "('non_marketplace'|'-3' shopee|'-4' lazada|'-9' tiktok); pending_reason_id " +
-  "(number | -1); cancel_reason_id (number | -2); shift " +
-  "('morning'|'afternoon'|'evening'); category_id (number | 'no_category'); " +
-  "business_countries_ids (country_code | 'no_business_countries'); " +
-  "saved_filter_id, slot_warehouse_id, combo_product, delivery_address_id " +
-  "(number). Exclude: key + is_exclude_<key>: true.";
+  "Filter object — CÙNG schema get_orders (apply_es_filter). " +
+  "⚠️ SAI TÊN KHOÁ HOẶC SAI KIỂU → BE trả 0 ĐƠN mà KHÔNG báo lỗi (khoá lạ thành " +
+  "truy vấn trên field không tồn tại) → ra SỐ SAI, tưởng nhầm 'kỳ đó không có đơn'. " +
+  "MCP chặn khoá lạ + tự wrap scalar→mảng, nhưng vẫn nên gửi đúng ngay từ đầu. " +
+  "\n\nNHÓM 1 — PHẢI LÀ MẢNG: " +
+  "`status` (KHÔNG PHẢI `statuses`) new|need_attention|waiting|need_confirm|" +
+  "sale_pending|confirmed|wait_print|printed|packing|pending|shipped|delivered|" +
+  "returning|returned|cancel; `sub_status`; `shop_id` ([13] KHÔNG phải 13); " +
+  "`partner_id` (hoặc ['no_courier']); `marketplace_id`; `slot_warehouse_id`; " +
+  "`pending_reason_id`; `cancel_reason_id`; `total_quantity`; `display_id`; " +
+  "`platform_order_id`; `printed_count`; `processing_count`; `creator_id`; " +
+  "`last_editor_id`; `send_to_partner_user_id`; `call_later_status`; `ssc_id`; " +
+  "`order_ids`; `keyword` (tìm display_id/phone/tracking/note); " +
+  "`include_tags`/`exclude_tags` (giá trị là TÊN tag — BE query tags.name — KHÔNG " +
+  "phải tag ID; thêm 'no_tag' để lọc đơn không tag; KHÔNG có khoá `tags`); " +
+  "`service_types` (hoặc ['No Service Type']); `assigning_sale_id`/" +
+  "`assigning_care_id` (hoặc ['no_user']/['has_user']); `order_source` " +
+  "(['non_marketplace']|['-3'] shopee|['-4'] lazada|['-9'] tiktok); `product_id`; " +
+  "`variation_id`; `combo_product`; `province_id`/`district_id`/`commune_id`. " +
+  "\n\nNHÓM 2 — SCALAR: `cod` ('has_cod'|'no_cod'|'<eq|gt_or_eq|lt_or_eq>_<số>'); " +
+  "`waybill_number` ('no_waybill_number'|'matched_waybill_number' — KHÔNG phải mã " +
+  "vận đơn, tìm mã thì dùng `keyword`); `courier_reconciliation_status` " +
+  "('importing'|'courier_reconciling'|'courier_reconciled'|" +
+  "'courier_not_yet_reconciled'); `customer_reconciliation_status` ('new'|" +
+  "'sent_email'|'reconciled'|'processing'|'completed'|'done'|" +
+  "'customer_not_yet_reconciled'); `is_duplicated_phone`/`is_duplicated_ip` " +
+  "(boolean); `need_attention_tags` (1 tên tag); `sub_sale_pending_reason`; " +
+  "toggle `no_address`/`no_detail_address`/`no_commune` (đơn thiếu địa chỉ). " +
+  "\n\nKHOẢNG THỜI GIAN: '<field>:ranges' = { since, until } ISO " +
+  "'YYYY-MM-DDTHH:MM:SS' theo GIỜ LOCAL của user (MCP tự quy sang mốc UTC tuyệt " +
+  "đối có 'Z'; tự thêm 'Z'/offset thì coi là absolute, không shift nữa). KHÔNG " +
+  "dùng unix epoch (BE trả rỗng). <field> ∈ inserted_at|updated_at|confirmed_at|" +
+  "send_to_partner_at|picked_up_at|delivered_at|assign_sale_at|" +
+  "first_assign_sale_at|assign_care_at|expected_receipt_date|call_later_at|" +
+  "sla_due_at|order_status. Kèm '<field>:editor_ids' (number[]) để lọc theo người " +
+  "thao tác trong khoảng. " +
+  "\n\nEXCLUDE: thêm 'is_exclude_<key>': true (vd is_exclude_partner_id). " +
+  "\n\nCHỈ CHO STATISTICS — pseudo-status, đặt MỘT MÌNH trong `status`: " +
+  "['confirmed_same_day'] (tạo & confirm trong cùng ngày theo tz user), " +
+  "['canceled_after_confirm'] (đã từng confirmed rồi bị huỷ).";
 
 const COMMON_PROPERTIES = {
   country_code: {
