@@ -353,7 +353,7 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 | `metrics` | string[]? | Field số cần sum. Default `["cod"]`. Số đơn (count) luôn có sẵn. Xem §7.2. |
 | `time_key` | string? | Khi `group_by` chứa `date`: mốc timestamp để bucket (default `updated_at`). Enum như date-range filter. |
 | `interval` | string? | Khi `group_by` chứa `date`: `day` \| `week` \| `month` (default `day`). |
-| `timezone` | number \| string? | Offset giờ local của user (`7`, `8`, `"+07:00"`). Dùng để convert date-range filter local→UTC **và** làm `time_zone` cho histogram. LUÔN truyền khi có date range / group_by `date`. |
+| `timezone` | number \| string? | Offset giờ local của user (`7`, `8`, `"+07:00"`). Dùng để hiểu date-range filter là giờ local nào (quy sang mốc UTC tuyệt đối) **và** làm `time_zone` cho histogram. LUÔN truyền khi có date range / group_by `date`. Xem cảnh báo ở §7.1. |
 | `size` | number? | Số bucket tối đa mỗi tầng terms (default 100, cap 1000). |
 
 #### 7.1. `filter` chi tiết
@@ -375,7 +375,7 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 
 | Key | Type | Note |
 |---|---|---|
-| `statuses` | string[] | `new`, `confirmed`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`, … |
+| `status` | string[] | **Tên khoá là `status`, KHÔNG phải `statuses`.** `new`, `confirmed`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`, … |
 | `sub_status` | string | sub-status filter |
 | `printed_count` | string/number | vd `0` để lọc đơn chưa in |
 | `processing_count` | string/number | count đơn đang xử lý |
@@ -385,15 +385,23 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 | Key | Type | Note |
 |---|---|---|
 | `time_key` | string | Field timestamp filter theo: `inserted_at`, `updated_at`, `assign_sale_at`, `picked_up_at`, `send_to_partner_at`, `delivered_at`, `first_assign_sale_at`. |
-| `<time_key>:ranges` | `{ since, until }` | ISO string `"YYYY-MM-DDTHH:MM:SS"` theo **giờ LOCAL** (giờ user nếu truyền param `timezone`, không thì giờ của `country_code` — vd `63` → PH UTC+8). MCP tự quy đổi sang UTC trước khi gọi BE (giống web — BE so với cột lưu UTC). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch — BE silently trả mảng rỗng. Nếu tự thêm hậu tố `Z`/offset thì coi là absolute, MCP không shift nữa. |
-| `timezone` | number \| string | Top-level (ngoài `filter`) — offset giờ của since/until: `7`, `8`, hoặc `"+07:00"`. **AI client nên LUÔN truyền khi filter có `*:ranges`**, theo giờ local của user → MCP convert local→UTC. Thiếu → fallback timezone của `country_code` (có thể lệch ranh giới ngày). |
+| `<time_key>:ranges` | `{ since, until }` | ISO string `"YYYY-MM-DDTHH:MM:SS"` theo **giờ LOCAL** (giờ user nếu truyền param `timezone`, không thì giờ của `country_code` — vd `63` → PH UTC+8). MCP quy đổi sang **mốc UTC tuyệt đối có hậu tố `Z`** trước khi gọi BE (xem cảnh báo dưới bảng). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch — BE silently trả mảng rỗng. Nếu tự thêm hậu tố `Z`/offset thì coi là absolute, MCP không shift nữa. |
+| `timezone` | number \| string | Top-level (ngoài `filter`) — offset giờ của since/until: `7`, `8`, hoặc `"+07:00"`. **AI client nên LUÔN truyền khi filter có `*:ranges`**, theo giờ local của user. Thiếu → fallback timezone của `country_code` (có thể lệch ranh giới ngày). |
+
+> ⚠️ **Vì sao phải gắn `Z`** (fix 2026-08-05): BE statistics tự gắn offset vào chuỗi
+> range **naive** theo `params["timezone"]` (`Services.EsV2.Order.normalize_range_timezone/2`,
+> commit `d3a66159`). Nếu client đã quy đổi local→UTC mà vẫn gửi chuỗi naive kèm
+> `timezone: "+08:00"` thì BE shift **lần thứ hai** → cửa sổ lệch đúng bằng offset
+> (PH/MY/SG +8 sai rõ, TH +7 may mắn ít lộ). MCP gửi mốc tuyệt đối có `Z` (BE giữ
+> nguyên) và **chỉ** gửi `timezone` xuống BE khi `group_by` chứa `date` — lúc đó nó
+> dùng cho `time_zone` của date_histogram.
 | `<time_key>:editor_ids` | number[] | optional — lọc thêm theo user thao tác trong khoảng. |
 
 **Advance filter** — mỗi key chỉ accept đúng enum dưới đây, KHÔNG free-form:
 
 | Key | Value | Label FE | Note |
 |---|---|---|---|
-| `shop_id` | `number` hoặc `"no_shop"` | POS Shop / No Shop | shop_id từ Pancake POS. |
+| `shop_id` | `number[]` (**mảng**) hoặc `"no_shop"` | POS Shop / No Shop | shop_id từ Pancake POS. `13` (số lẻ) → BE dựng `terms` sai kiểu ⇒ **0 đơn, không báo lỗi**; phải là `[13]`. MCP tự wrap giúp. |
 | `partner_id` | `number` hoặc `"no_courier"` | Courier / No Courier | |
 | `service_types` | `string` | Service Type | Từ `ffmSettings` type `customer_service_type`, hoặc `"No Service Type"`. |
 | `tags` | `number[]` (tag ID) hoặc `"no_tag"` | Tag / No tag | include/exclude qua `is_exclude_tags`. |
@@ -423,11 +431,31 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 { "filter": { "tags": [123], "is_exclude_tags": true } }
 ```
 
-**Sort:** truyền qua `extra` (MCP tool chỉ nhận `filter` ở top-level):
+> **Sort không áp dụng** cho statistics — kết quả là bucket tổng hợp, không phải danh
+> sách đơn. Muốn giới hạn số bucket thì dùng `size`.
 
-```json
-{ "filter": { "statuses": ["shipped"] }, "extra": { "sort_by": "inserted_at", "sort_direction": "desc" } }
-```
+#### 7.1.1. ⚠️ Sai tên khoá / sai kiểu → **0 đơn, KHÔNG báo lỗi**
+
+`apply_es_filter` phía BE có clause catch-all: khoá lạ vẫn được dựng thành
+`terms: %{<khoá lạ> => …}` trên field không tồn tại trong mapping ES → match 0 doc
+và trả về bình thường. Đây là loại lỗi nguy hiểm nhất vì **ra SỐ SAI chứ không ra lỗi**
+— người đọc tưởng "kỳ đó không có đơn".
+
+| Viết sai | Kết quả | Viết đúng |
+|---|---|---|
+| `filter.statuses: ["delivered"]` | **0 đơn**, im lặng | `filter.status: ["delivered"]` |
+| `filter.shop_id: 13` (số lẻ) | **0 đơn**, im lặng | `filter.shop_id: [13]` |
+
+**MCP chặn sẵn giúp bạn:** khoá lạ → trả lỗi kèm gợi ý (``Khoá filter không hợp lệ:
+`statuses` (có phải `status`?)``); khoá dạng `terms` nhận số lẻ → tự wrap thành mảng.
+Các khoá dạng `terms` **phải là mảng**: `status`, `sub_status`, `shop_id`,
+`marketplace_id`, `tags`, `category_id`, `slot_warehouse_id`, `pending_reason_id`,
+`cancel_reason_id`, `shift`, `business_countries_ids`, `saved_filter_id`,
+`delivery_address_id`, `total_quantity`.
+
+> Việc BE tự validate và báo lỗi khi gặp khoá lạ là thay đổi phía `sea-fulfillment`
+> (dùng chung `apply_es_filter` với `get_orders` → blast radius toàn hệ thống), chưa
+> nằm trong phạm vi repo này.
 
 #### 7.2. `metrics` chi tiết
 
@@ -506,7 +534,8 @@ Cấu trúc:
 - `src/tools.ts` — tool def `order_statistics` + `buildServer` + `handleToolCall` (dùng chung 2 entry).
 - `src/api.ts` — HTTP client (`callStatistics`/`fetchShops`, auth password|token).
 - `src/statistics.ts` — decorate response statistics (nhãn người đọc + scale tiền tệ).
-- `src/filter.ts` — quy đổi date-range filter local→UTC + `esOffsetString` cho histogram.
+- `src/filter.ts` — quy đổi date-range filter local→UTC tuyệt đối (`Z`) + `esOffsetString` cho histogram.
+- `src/filter-schema.ts` — whitelist khoá filter: chặn khoá sai tên, wrap scalar→mảng (xem §7.1.1).
 - `src/constants.ts` — `SUPPORTED_COUNTRIES`, `SUPPORTED_HOSTS`, `METRIC_DEFS`, currency map…
 
 ---

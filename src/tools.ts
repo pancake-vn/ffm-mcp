@@ -22,6 +22,7 @@ import {
   GROUP_FIELDS,
   METRIC_KEYS,
 } from "./constants.js";
+import { validateFilter } from "./filter-schema.js";
 import { esOffsetString, localRangesToUtc, resolveUtcOffset } from "./filter.js";
 import { decorateStatistics } from "./statistics.js";
 
@@ -38,19 +39,27 @@ const StatisticsInput = z.object({
 });
 
 const FILTER_DESCRIPTION =
-  "Filter object — CÙNG schema get_orders (apply_es_filter). Keys phổ biến: " +
-  "search: keyword (string[]), order_ids (number[]); status: statuses " +
-  "(string[] — new/confirmed/printed/packing/pending/shipped/delivered/" +
-  "returning/returned/cancel), sub_status; date range (dynamic theo time_key): " +
+  "Filter object — CÙNG schema get_orders (apply_es_filter). ⚠️ TÊN KHOÁ PHẢI " +
+  "CHÍNH XÁC: BE bỏ qua khoá lạ và trả 0 đơn mà KHÔNG báo lỗi (vd viết " +
+  "`statuses` thay vì `status` → 0 đơn, tưởng nhầm là kỳ đó không có đơn). MCP " +
+  "chặn khoá lạ và báo lỗi thay vì trả số sai. Khoá dạng terms (status, " +
+  "sub_status, shop_id, marketplace_id, tags, category_id, slot_warehouse_id, " +
+  "pending_reason_id, cancel_reason_id, shift, business_countries_ids, " +
+  "saved_filter_id, delivery_address_id, total_quantity) PHẢI là MẢNG — " +
+  "`shop_id: [13]` chứ KHÔNG phải `shop_id: 13` (MCP tự wrap giúp nếu lỡ gửi số lẻ). " +
+  "Keys phổ biến: search: keyword (string[]), order_ids (number[]); trạng thái: " +
+  "`status` (string[] — new/confirmed/printed/packing/pending/shipped/delivered/" +
+  "returning/returned/cancel — TÊN LÀ `status`, KHÔNG PHẢI `statuses`), " +
+  "sub_status (string[]); date range (dynamic theo time_key): " +
   "time_key (vd 'inserted_at'/'updated_at'/'assign_sale_at'/'picked_up_at'/" +
   "'send_to_partner_at'/'delivered_at'/'first_assign_sale_at'), " +
   "'<time_key>:ranges' = { since, until } dạng ISO 'YYYY-MM-DDTHH:MM:SS' theo " +
   "GIỜ LOCAL (của user nếu truyền `timezone`, không thì giờ của country): MCP tự " +
-  "quy đổi sang UTC trước khi gọi BE (giống web). KHÔNG dùng unix epoch (BE " +
-  "silently trả rỗng). Nếu tự thêm hậu tố 'Z'/offset thì coi là absolute, MCP " +
-  "không shift nữa. Advance filter — value PHẢI là enum FE accept, KHÔNG " +
-  "free-form: shop_id (number | 'no_shop'); partner_id (number | 'no_courier'); " +
-  "service_types (string); tags (number[] | 'no_tag', kèm is_exclude_tags); " +
+  "quy đổi sang mốc UTC tuyệt đối (hậu tố 'Z') trước khi gọi BE. KHÔNG dùng unix " +
+  "epoch (BE silently trả rỗng). Nếu tự thêm hậu tố 'Z'/offset thì coi là absolute, " +
+  "MCP không shift nữa. Advance filter — value PHẢI là enum FE accept, KHÔNG " +
+  "free-form: shop_id (number[] — mảng, hoặc 'no_shop'); partner_id (number | " +
+  "'no_courier'); service_types (string); tags (number[] | 'no_tag', kèm is_exclude_tags); " +
   "total_quantity (number); cod ('no_cod' | 'has_cod' | " +
   "'<eq|gt_or_eq|lt_or_eq>_<amount>'); is_duplicated_phone/is_duplicated_ip " +
   "(boolean); courier_reconciliation_status ('importing'|'courier_reconciling'|" +
@@ -119,11 +128,12 @@ const COMMON_PROPERTIES = {
     type: ["number", "string"],
     description:
       "Offset giờ local của USER — suy ra từ giờ/locale hiện tại (vd VN/TH → 7, " +
-      "PH/SG/MY → 8; cũng nhận '+07:00'). Dùng CHO 2 việc: (1) convert since/until " +
-      "trong filter `*:ranges` local→UTC trước khi gọi BE; (2) time_zone cho " +
-      "date_histogram khi group_by 'date'. LUÔN truyền khi có date range hoặc " +
-      "group_by date. Thiếu → fallback timezone của country_code (có thể lệch " +
-      "ranh giới ngày).",
+      "PH/SG/MY → 8; cũng nhận '+07:00'). Dùng CHO 2 việc: (1) hiểu since/until " +
+      "trong filter `*:ranges` là giờ local nào để quy sang mốc UTC tuyệt đối; " +
+      "(2) time_zone cho date_histogram khi group_by 'date' (chỉ khi đó MCP mới " +
+      "gửi field này xuống BE — gửi thừa sẽ làm BE shift cửa sổ lọc). LUÔN truyền " +
+      "khi có date range hoặc group_by date. Thiếu → fallback timezone của " +
+      "country_code (có thể lệch ranh giới ngày).",
   },
   size: {
     type: "number",
@@ -177,7 +187,16 @@ export async function handleToolCall(
         const ctx = { host: binding.host, countryCode: country, auth: binding.auth };
 
         const offset = resolveUtcOffset(args.timezone, country);
-        const filter = localRangesToUtc(args.filter ?? {}, offset) ?? {};
+        // Chặn khoá filter sai tên (BE trả 0 đơn im lặng) + wrap scalar → mảng.
+        const checked = validateFilter(args.filter);
+        // Range → mốc UTC tuyệt đối (có "Z") ⇒ BE không gắn offset lần 2.
+        const filter = localRangesToUtc(checked, offset) ?? {};
+
+        const requestedDims = Array.isArray(args.group_by)
+          ? args.group_by
+          : args.group_by
+            ? [args.group_by]
+            : [];
 
         const payload: Record<string, unknown> = { filter };
         if (args.group_by != null) payload.group_by = args.group_by;
@@ -185,8 +204,11 @@ export async function handleToolCall(
         if (args.time_key) payload.time_key = args.time_key;
         if (args.interval) payload.interval = args.interval;
         if (args.size != null) payload.size = args.size;
-        // ES date_histogram time_zone — BE bỏ qua nếu không group_by date.
-        payload.timezone = esOffsetString(offset);
+        // CHỈ gửi timezone khi group_by date — lúc đó BE cần cho date_histogram time_zone.
+        // Gửi thừa là có hại: BE dùng chính giá trị này để gắn offset vào range naive
+        // (normalize_range_timezone) → lệch cửa sổ. Range của MCP đã có "Z" nên không bị
+        // gắn, nhưng không gửi thừa vẫn an toàn hơn.
+        if (requestedDims.includes("date")) payload.timezone = esOffsetString(offset);
 
         const data = await callStatistics(ctx, payload);
 

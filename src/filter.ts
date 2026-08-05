@@ -1,8 +1,12 @@
-// Quy đổi date range trong filter từ GIỜ LOCAL của country → UTC trước khi gọi BE.
+// Quy đổi date range trong filter từ GIỜ LOCAL của country → mốc UTC TUYỆT ĐỐI
+// (chuỗi kết thúc bằng "Z") trước khi gọi BE.
 //
-// Vì sao: BE parse `<time_key>:ranges` qua NaiveDateTime.from_iso8601! (bỏ hậu tố Z)
-// rồi so trực tiếp với cột lưu UTC (vd o.inserted_at). Web gửi UTC (dayjs .toISOString()
-// → "...Z") nên khớp. MCP phải làm y vậy, nếu không cửa sổ bị lệch theo offset (PH +8).
+// Vì sao PHẢI có hậu tố "Z": BE statistics tự gắn offset vào chuỗi naive theo
+// params["timezone"] (SeaFulfillment Services.EsV2.Order.normalize_range_timezone/2,
+// commit d3a66159). Nếu MCP đã convert local→UTC mà gửi chuỗi NAIVE kèm timezone
+// "+08:00" thì BE shift LẦN 2 → cửa sổ lệch đúng bằng offset (PH/MY/SG +8 sai rõ).
+// Chuỗi có sẵn "Z"/±HH:MM được BE giữ nguyên (put_offset/2) → gắn "Z" là cách an toàn,
+// đúng bất kể BE có bước normalize đó hay không.
 //
 // Hợp đồng: caller (Claude) truyền since/until theo giờ LOCAL (timezone của user nếu
 // biết, không thì giờ của country), không tz. Nếu chuỗi đã có Z hoặc ±HH:MM → coi là
@@ -53,17 +57,18 @@ export function esOffsetString(offsetHours: number): string {
   return offsetSuffix(offsetHours);
 }
 
-// "YYYY-MM-DDTHH:MM:SS" (giờ local) hoặc absolute (có Z/offset) → naive UTC "YYYY-MM-DDTHH:MM:SS".
-function toUtcNaive(value: string, offsetHours: number): string {
+// "YYYY-MM-DDTHH:MM:SS" (giờ local) hoặc absolute (có Z/offset) → UTC tuyệt đối
+// "YYYY-MM-DDTHH:MM:SSZ". Giữ "Z" để BE KHÔNG gắn thêm offset (xem comment đầu file).
+function toUtcAbsolute(value: string, offsetHours: number): string {
   const s = String(value).trim();
   const iso = hasExplicitTz(s) ? s : `${s}${offsetSuffix(offsetHours)}`;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return value; // không parse được → giữ nguyên, để BE tự xử lý
-  return d.toISOString().slice(0, 19); // bỏ ms + Z → naive UTC
+  return `${d.toISOString().slice(0, 19)}Z`; // bỏ ms, giữ Z → UTC tuyệt đối
 }
 
 function convertBoundary(v: unknown, offsetHours: number): unknown {
-  return typeof v === "string" ? toUtcNaive(v, offsetHours) : v;
+  return typeof v === "string" ? toUtcAbsolute(v, offsetHours) : v;
 }
 
 // Convert mọi key `<time_key>:ranges` (và `ranges`) trong filter sang UTC.
