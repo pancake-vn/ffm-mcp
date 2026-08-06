@@ -104,7 +104,10 @@ const COMMON_PROPERTIES = {
       GROUP_FIELDS.join(" | ") +
       ". Rỗng/bỏ trống → chỉ trả tổng (totals). 'date' PHẢI đứng một mình " +
       "(histogram) — kèm chiều khác thì BE chỉ giữ date. VD ['status'] hoặc " +
-      "['status','shop_id'] (cross-tab).",
+      "['status','shop_id'] (cross-tab). Đơn THIẾU giá trị vẫn có bucket riêng: " +
+      "order_source → 'non_marketplace' (đơn Facebook/tự tạo, thường là nhóm LỚN " +
+      "NHẤT), sub_status → 'no_sub_status', shop_id → -1 ('No shop') ⇒ tổng count " +
+      "các bucket khớp total_entries; lệch nghĩa là có lỗi, đừng tự suy diễn.",
   },
   metrics: {
     type: "array",

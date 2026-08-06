@@ -529,6 +529,11 @@ Số đơn (`count`) luôn có sẵn, không cần khai. Tiền được scale s
 
 - `labels` — nhãn người đọc mỗi chiều (status text, tên shop, marketplace,
   ngày `YYYY-MM-DD`); `keys` — raw key tương ứng (dùng khi cần id gốc).
+- **Đơn thiếu giá trị vẫn có bucket riêng**, nên tổng `count` các bucket luôn
+  khớp `total_entries`: `order_source` → `non_marketplace` / "Non-marketplace"
+  (đơn Facebook, tự tạo — thường là nhóm lớn nhất), `sub_status` →
+  `no_sub_status`, `shop_id` → `-1` / "No shop". Bucket `non_marketplace` khớp
+  đúng vocabulary của filter `order_source: ["non_marketplace"]`.
 - `values` / `totals` — tiền đã scale theo currency (không chia thêm).
 - Khi `group_by` chứa `date`, output kèm `time_key` + `interval` đã dùng.
 

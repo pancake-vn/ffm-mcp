@@ -108,6 +108,8 @@ export const ORDER_STATUS_TEXT: Record<string, string> = {
 export const SUB_STATUS_TEXT: Record<string, string> = {
   matched: "Matched",
   mismatched: "Mismatched",
+  // Bucket BE gom doc THIẾU sub_status (terms agg `missing`) — không phải giá trị lưu trong DB.
+  no_sub_status: "No sub status",
   // packingOrderStatus
   to_pack: "To pack",
   packing: "Packing",
@@ -141,7 +143,14 @@ export const MARKETPLACE_SOURCE: Record<string, string> = {
   "-3": "Shopee",
   "-4": "Lazada",
   "-9": "TikTok",
+  // Bucket BE gom đơn KHÔNG có marketplace_id (Facebook / tự tạo) — trùng vocabulary của
+  // filter `order_source: ["non_marketplace"]` nên gom nhóm ra key nào lọc lại được key đó.
+  non_marketplace: "Non-marketplace",
 };
+
+// shop_id là field integer nên sentinel `missing` của BE phải là số — dùng -1 (cùng quy ước
+// với pending_reason_id -1 / cancel_reason_id -2), không thể va với id thật (bigserial > 0).
+export const NO_SHOP_KEY = "-1";
 
 // group_by dimensions hợp lệ (khớp @statistic_group_fields BE). `date` chỉ dùng đơn.
 export const GROUP_FIELDS: ReadonlyArray<string> = [

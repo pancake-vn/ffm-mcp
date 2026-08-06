@@ -10,6 +10,7 @@ import {
   INT_CURRENCY_LIST,
   MARKETPLACE_SOURCE,
   METRIC_BY_KEY,
+  NO_SHOP_KEY,
   ORDER_STATUS_TEXT,
   SUB_STATUS_TEXT,
   currencyByCountry,
@@ -40,6 +41,7 @@ function resolveLabel(
     case "marketplace_id":
       return MARKETPLACE_SOURCE[raw] || raw;
     case "shop_id":
+      if (raw === NO_SHOP_KEY) return "No shop";
       return shopsById[raw]?.name || `Shop #${raw}`;
     case "date":
       // key_as_string đã áp time_zone → 10 ký tự đầu là YYYY-MM-DD local.
