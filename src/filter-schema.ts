@@ -17,7 +17,6 @@
 const TERM_ARRAY_KEYS: ReadonlyArray<string> = [
   // catch-all → terms trên field cùng tên (có trong mapping)
   "status",
-  "sub_status",
   "shop_id",
   "marketplace_id",
   "slot_warehouse_id",
@@ -34,6 +33,7 @@ const TERM_ARRAY_KEYS: ReadonlyArray<string> = [
   "call_later_status",
   "ssc_id",
   // clause riêng nhưng nhận list
+  "order_sub_status", // terms trên field `sub_status` — caller gửi `sub_status` cũng được, xem KEY_ALIASES
   "order_ids",
   "keyword",
   "include_tags", // giá trị là TÊN tag (BE query tags.name), + "no_tag"
@@ -72,7 +72,16 @@ const PASSTHROUGH_KEYS: ReadonlyArray<string> = [
 const DYNAMIC_KEY = /(?::ranges|:editor_ids)$/;
 const EXCLUDE_FLAG = /^is_exclude_/;
 
-const KNOWN_KEYS: ReadonlyArray<string> = [...TERM_ARRAY_KEYS, ...PASSTHROUGH_KEYS];
+// Khoá caller hay gửi → khoá BE thật sự áp dụng. `sub_status` bị base_es_query/2 `Map.drop`
+// khi `status` không phải MỘT chuỗi thuộc need_attention/sale_pending/@sub_status_statuses
+// (key đó dành cho tab con của trang list). MCP luôn gửi `status` dạng mảng, không truyền
+// thì là nil → cả hai đều khiến `sub_status` bị bỏ và BE trả số của MỌI đơn. `order_sub_status`
+// lọc cùng field `sub_status` nhưng không bị bỏ.
+const KEY_ALIASES: Record<string, string> = {
+  sub_status: "order_sub_status",
+};
+
+const KNOWN_KEYS: ReadonlyArray<string> = [...TERM_ARRAY_KEYS, ...PASSTHROUGH_KEYS, ...Object.keys(KEY_ALIASES)];
 
 // Khoá hay bị dùng nhầm — đã đối chiếu apply_es_filter + ES mapping của order index.
 // Nêu thẳng cách thay thế thay vì để caller đoán.
@@ -124,7 +133,14 @@ export function validateFilter(
   const out: Record<string, unknown> = {};
   const unknown: string[] = [];
 
-  for (const [key, value] of Object.entries(filter)) {
+  for (const [rawKey, value] of Object.entries(filter)) {
+    const flagOf = rawKey.replace(EXCLUDE_FLAG, "");
+    const key =
+      KEY_ALIASES[rawKey] ??
+      (EXCLUDE_FLAG.test(rawKey) && KEY_ALIASES[flagOf] ? `is_exclude_${KEY_ALIASES[flagOf]}` : rawKey);
+    if (key !== rawKey && key in filter) {
+      throw new FilterKeyError(`Không gửi cùng lúc \`${rawKey}\` và \`${key}\` — hai khoá lọc cùng field, chỉ giữ một.`);
+    }
     if (DYNAMIC_KEY.test(key) || EXCLUDE_FLAG.test(key) || PASSTHROUGH_KEYS.includes(key)) {
       out[key] = value;
       continue;

@@ -374,7 +374,7 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 | Key | Type | Note |
 |---|---|---|
 | `status` | string[] | **Tên khoá là `status`, KHÔNG phải `statuses`.** `new`, `need_attention`, `waiting`, `need_confirm`, `sale_pending`, `confirmed`, `wait_print`, `printed`, `packing`, `pending`, `shipped`, `delivered`, `returning`, `returned`, `cancel`. |
-| `sub_status` | string[] | sub-status (đóng gói / giao vận / khớp tồn) |
+| `sub_status` | string[] | sub-status (đóng gói / giao vận / khớp tồn). Lọc được với mọi `status`, kể cả khi không truyền `status`. MCP tự đổi thành khoá `order_sub_status` trước khi gọi BE (kể cả `is_exclude_sub_status`), vì khoá `sub_status` bị `base_es_query/2` bỏ khi `status` không phải một chuỗi thuộc `need_attention` / `sale_pending` / tab con — MCP luôn gửi `status` dạng mảng nên trước đây filter này không bao giờ được áp dụng. Không gửi cùng lúc `sub_status` và `order_sub_status`. |
 | `printed_count` | string[] | `"0"` chưa in; `"gt_or_eq_2"`, `"lt_or_eq_1"` |
 | `processing_count` | string[] | cùng cú pháp `printed_count` |
 

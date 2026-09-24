@@ -46,7 +46,8 @@ const FILTER_DESCRIPTION =
   "\n\nNHÓM 1 — PHẢI LÀ MẢNG: " +
   "`status` (KHÔNG PHẢI `statuses`) new|need_attention|waiting|need_confirm|" +
   "sale_pending|confirmed|wait_print|printed|packing|pending|shipped|delivered|" +
-  "returning|returned|cancel; `sub_status`; `shop_id` ([13] KHÔNG phải 13); " +
+  "returning|returned|cancel; `sub_status` (lọc được với mọi `status`, kể cả không có " +
+  "`status`; MCP gửi lên BE bằng khoá `order_sub_status`); `shop_id` ([13] KHÔNG phải 13); " +
   "`partner_id` (hoặc ['no_courier']); `marketplace_id`; `slot_warehouse_id`; " +
   "`pending_reason_id`; `cancel_reason_id`; `total_quantity`; `display_id`; " +
   "`platform_order_id`; `printed_count`; `processing_count`; `creator_id`; " +
