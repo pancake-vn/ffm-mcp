@@ -3,7 +3,8 @@
 //
 // Auth: server tự gọi POST /api/users/login/password lấy access_token bằng
 // SEA_FULFILLMENT_USERNAME + SEA_FULFILLMENT_PASSWORD, cache theo `exp` claim
-// (30 ngày), auto re-login khi BE trả 401.
+// (30 ngày, lưu ra ~/.ffm-mcp/tokens.json), auto re-login khi BE trả 401. Tài khoản bật
+// bảo mật 2 lớp: nhập OTP qua tool ffm_verify_otp.
 //
 // Tool definitions + logic dùng chung với http entry, ở src/tools.ts.
 // Remote (HTTP + OAuth) entry: src/http.ts.
@@ -44,7 +45,7 @@ const resolveAuth: ResolveAuth = (_extra, args) => {
 };
 
 async function main() {
-  const server = buildServer(resolveAuth);
+  const server = buildServer(resolveAuth, { otpTool: true });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write("[ffm-mcp] ready on stdio\n");

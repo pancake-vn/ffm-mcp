@@ -67,8 +67,16 @@ app.post(
   express.urlencoded({ extended: false }),
   async (req, res) => {
     try {
-      const redirectUrl = await provider.submitLogin(req.body);
-      res.redirect(302, redirectUrl);
+      const result = await provider.submitLogin(req.body);
+      if ("redirect" in result) {
+        res.redirect(302, result.redirect);
+      } else {
+        // Tài khoản bật bảo mật 2 lớp: trang nhập OTP.
+        res
+          .set("Content-Type", "text/html; charset=utf-8")
+          .set("Cache-Control", "no-store")
+          .send(result.html);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res

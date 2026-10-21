@@ -64,9 +64,18 @@ async function readEnvelope(res: Response, label: string): Promise<any> {
     success?: boolean;
     data?: unknown;
     message?: string;
+    error_code?: number;
   };
   if (json?.success === false) {
     const msg = json.message || "";
+    // error_code 103 (plug check_two_factor của BE): tài khoản chưa bật bảo mật 2 lớp — token
+    // vẫn đúng, đăng nhập / authorize lại không giúp gì nên KHÔNG đổi thành 401.
+    if (json.error_code === 103) {
+      throw new Error(
+        "Tài khoản FFM chưa bật bảo mật 2 lớp — đăng nhập web FFM, bật ở màn " +
+          "/two_factor rồi hỏi lại (không cần kết nối lại MCP).",
+      );
+    }
     if (/auth|token|login|unauthor/i.test(msg)) throw new HttpError(401, msg);
     throw new Error(`${label} failed: ${msg || JSON.stringify(json).slice(0, 300)}`);
   }

@@ -64,7 +64,21 @@ khi sắp hết hạn hoặc khi BE trả 401.
 3. Các call sau dùng cache, refresh trước hạn 5 phút để tránh race.
 4. Nếu BE trả 401 → invalidate cache + force re-login + retry 1 lần.
 
-Cache là in-memory per-process: restart client → mất cache, login lại lần kế.
+Token được lưu vào `~/.ffm-mcp/tokens.json` (chỉ chủ máy đọc được, quyền 600):
+mở lại client vẫn dùng token cũ tới khi hết hạn, không đăng nhập lại.
+
+### 2.1.1. Tài khoản bật bảo mật 2 lớp (OTP)
+
+Đăng nhập bằng mật khẩu chưa đủ: BE gửi mã OTP về email của tài khoản.
+
+1. Tool báo "Tài khoản FFM cần mã OTP gửi về email…" → trợ lý AI hỏi bạn mã trong email.
+2. Bạn gõ mã vào chat → AI gọi tool `ffm_verify_otp` với `otp_code` → server
+   đăng nhập kèm mã, lưu token (~30 ngày) rồi AI hỏi lại câu ban đầu.
+3. Mã sống 5 phút. Hết hạn → bảo AI "gửi lại mã" (gọi `ffm_verify_otp` không
+   kèm mã; BE gửi tối đa 1 mã / 60 giây).
+
+Chỉ phải nhập OTP lại khi token hết hạn hoặc bị BE từ chối (vd đổi mật khẩu).
+Tài khoản chưa bật 2 lớp: tool báo cần bật trên web FFM (màn `/two_factor`) trước.
 
 `app_id` được BE tự nhận diện theo hostname trong request — bạn **không cần**
 truyền `app_id`, chỉ cần login đúng host của tenant.
@@ -547,6 +561,8 @@ Số đơn (`count`) luôn có sẵn, không cần khai. Tiền được scale s
 | `Missing host` | Chưa set `SEA_FULFILLMENT_HOST`. Xem §2.2. |
 | `login failed: Wrong username or password` | Sai mật khẩu, hoặc login sai tenant (host không khớp). |
 | `statistics HTTP 401` | Token bị revoke giữa chừng (đổi password / force logout). Server đã auto-retry; nếu vẫn fail, kiểm tra password env. |
+| `Tài khoản FFM cần mã OTP gửi về email…` | Tài khoản bật bảo mật 2 lớp — nhập mã trong email qua `ffm_verify_otp`. Xem §2.1.1. |
+| `Tài khoản FFM chưa bật bảo mật 2 lớp…` | Đăng nhập web FFM, bật ở màn `/two_factor`, rồi hỏi lại (không cần kết nối lại MCP). |
 | `statistics HTTP 403` | Token đúng nhưng `country_code` không thuộc nước user được phép. |
 | Tool không xuất hiện | `claude mcp list` xem status. `npx` báo lỗi → xem gotcha PATH ở §3.2. |
 | `command not found: npx` (Claude Desktop macOS) | App GUI không có PATH của shell — dùng đường dẫn tuyệt đối tới `npx` + set `PATH` trong `env`. Xem §3.2. |
@@ -593,7 +609,8 @@ gian gọi BE FFM (login + statistics), **không sửa gì ở BE**.
 Claude Desktop → **Settings → Connectors → Add custom connector** → dán
 `https://mcp-ffm.pancake.vn/mcp` → trình duyệt mở trang Authorize → **chọn tenant**
 (fulfillment.pancake.vn, g-solution.vn, bigate.co…) + nhập username/password FFM →
-xong. Hỏi thử: *"liệt kê 5 đơn gần nhất ở Philippines"*.
+tài khoản bật bảo mật 2 lớp thì nhập thêm mã OTP gửi về email (nút "Gửi lại mã" nếu
+mã hết hạn) → xong. Hỏi thử: *"liệt kê 5 đơn gần nhất ở Philippines"*.
 
 Token phát ra sống ~30 ngày (khớp hạn JWT FFM); hết hạn thì Authorize lại.
 
@@ -617,6 +634,9 @@ docker run -p 8080:8080 \
 
 > Host **không** đặt qua env — user chọn tenant trên trang Authorize, host được nhúng
 > vào token. Không lưu username/password server-side; chỉ giữ JWT FFM trong token đã ký.
+> Ngoại lệ: tài khoản cần OTP, mật khẩu được giữ trong bộ nhớ process trong lúc chờ user
+> nhập mã (5 phút kể từ lần gửi mã gần nhất, tổng tối đa 15 phút; vì BE kiểm lại cả mật
+> khẩu lẫn mã), không đưa vào HTML.
 
 **Deploy bằng pm2 (Node, không Docker)** — cấu hình host/repo/path trong
 `ecosystem.config.cjs` (block `deploy.production`), nginx

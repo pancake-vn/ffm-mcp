@@ -17,6 +17,7 @@ import {
 import { z } from "zod";
 
 import { CallAuth, callStatistics, fetchShops } from "./api.js";
+import { OtpRequiredError, TOKEN_FILE, verifyOtp } from "./auth.js";
 import {
   DATE_FIELD_KEYS,
   GROUP_FIELDS,
@@ -36,6 +37,11 @@ const StatisticsInput = z.object({
   interval: z.string().optional(),
   timezone: z.union([z.number(), z.string()]).optional(),
   size: z.number().int().positive().max(1000).optional(),
+});
+
+const VerifyOtpInput = z.object({
+  otp_code: z.coerce.string().optional(),
+  host: z.string().url().optional(),
 });
 
 const FILTER_DESCRIPTION =
@@ -172,6 +178,36 @@ export const TOOL_DEFS = [
   },
 ];
 
+// Chỉ stdio: tài khoản bật bảo mật 2 lớp phải nhập OTP khi đăng nhập bằng username/password.
+// Http/remote nhập OTP ngay trên trang Authorize nên không có tool này.
+export const VERIFY_OTP_TOOL_DEF = {
+  name: "ffm_verify_otp",
+  description:
+    "Nhập mã OTP để đăng nhập FFM khi tool khác báo tài khoản cần OTP (bảo mật 2 lớp). " +
+    "Mã OTP được gửi về email của tài khoản — HỎI USER mã, KHÔNG tự đoán. Có otp_code → " +
+    "đăng nhập, lưu token (~30 ngày) rồi gọi lại tool vừa bị chặn. Bỏ trống otp_code → " +
+    "gửi mã mới (mã sống 5 phút, tối đa 1 mã / 60 giây).",
+  inputSchema: {
+    type: "object",
+    properties: {
+      otp_code: { type: "string", description: "Mã OTP user đọc từ email." },
+      host: {
+        type: "string",
+        description: "Truyền đúng host đã dùng ở tool bị chặn (nếu có); bỏ trống = env SEA_FULFILLMENT_HOST.",
+      },
+    },
+  },
+};
+
+function otpRequiredText(beMessage: string): string {
+  return (
+    "Tài khoản FFM cần mã OTP gửi về email để đăng nhập. BE: " + beMessage +
+    "\nHỏi user mã OTP trong email rồi gọi tool ffm_verify_otp với otp_code (cùng host " +
+    "nếu đã truyền host). Mã hết hạn sau 5 phút; hết hạn thì gọi ffm_verify_otp không " +
+    "kèm otp_code để gửi mã mới."
+  );
+}
+
 // host + auth resolved bởi entry (stdio đọc env, http đọc token).
 export interface AuthBinding {
   host: string;
@@ -233,10 +269,45 @@ export async function handleToolCall(
         };
       }
 
+      case "ffm_verify_otp": {
+        if (binding.auth.kind !== "password") {
+          throw new Error("ffm_verify_otp chỉ dùng cho chế độ chạy local (stdio).");
+        }
+        const args = VerifyOtpInput.parse(rawArgs ?? {});
+        // Mã của BE gồm chữ hoa + số, so khớp phân biệt hoa thường; AI chép lại từ chat có thể
+        // chèn khoảng trắng hoặc đổi chữ thường.
+        const otpCode = args.otp_code?.replace(/\s+/g, "").toUpperCase();
+        try {
+          const token = await verifyOtp(
+            binding.host,
+            binding.auth.username,
+            binding.auth.password,
+            otpCode,
+          );
+          const until = new Date(token.expEpoch * 1000).toISOString();
+          return {
+            content: [{
+              type: "text",
+              text: `Đăng nhập FFM thành công, token dùng tới ${until}, đã lưu ở ${TOKEN_FILE}. ` +
+                "Gọi lại tool vừa bị chặn.",
+            }],
+          };
+        } catch (err) {
+          // Không kèm mã = yêu cầu gửi mã mới: BE trả require_otp là kết quả mong đợi.
+          if (!otpCode && err instanceof OtpRequiredError) {
+            return { content: [{ type: "text", text: otpRequiredText(err.message) }] };
+          }
+          throw err;
+        }
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (err) {
+    if (err instanceof OtpRequiredError) {
+      return { isError: true, content: [{ type: "text", text: otpRequiredText(err.message) }] };
+    }
     const message = err instanceof Error ? err.message : String(err);
     return {
       isError: true,
@@ -252,14 +323,18 @@ export type ResolveAuth = (
   args: Record<string, unknown>,
 ) => AuthBinding;
 
-export function buildServer(resolveAuth: ResolveAuth): Server {
+// opts.otpTool: stdio bật để liệt kê ffm_verify_otp.
+export function buildServer(
+  resolveAuth: ResolveAuth,
+  opts: { otpTool?: boolean } = {},
+): Server {
   const server = new Server(
     { name: "ffm-mcp", version: "0.4.0" },
     { capabilities: { tools: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFS,
+    tools: opts.otpTool ? [...TOOL_DEFS, VERIFY_OTP_TOOL_DEF] : TOOL_DEFS,
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
