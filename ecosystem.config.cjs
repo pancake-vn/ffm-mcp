@@ -37,7 +37,7 @@ module.exports = {
       // VM dùng node qua nvm → SSH non-interactive không có node/npm/pm2 trong
       // PATH, phải export trước (giống sea-fulfillment-web).
       "post-deploy":
-        "export PATH=$PATH:/home/cc/.nvm/versions/node/v20.18.2/bin && npm ci && npm run build && pm2 startOrReload ecosystem.config.cjs --env production",
+        "export PATH=$PATH:/home/cc/.nvm/versions/node/v24.22.1/bin && npm ci && npm run build && pm2 startOrReload ecosystem.config.cjs --env production",
     },
   },
 };

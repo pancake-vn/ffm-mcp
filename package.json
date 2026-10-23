@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsc && node --test test/",
+    "test": "tsc && node --test",
     "start:http": "node dist/http.js",
     "dev": "tsc -w",
     "setup": "pm2 deploy ecosystem.config.cjs production setup",
