@@ -350,9 +350,11 @@ vuông, AI sẽ tự dịch sang tham số tool tương ứng.
 
 ## 7. Tools (tham khảo)
 
-MCP có **2 tool**: `order_statistics` (POST `/api/orders/statistics`) — thống
-kê tổng hợp, KHÔNG list/xuất từng đơn; và `find_users` (POST `/api/users/get_users`) —
-tra UUID user cho các bộ lọc theo user. Chế độ stdio có thêm `ffm_verify_otp` (§2.1.1).
+MCP có **3 tool**: `order_statistics` (POST `/api/orders/statistics`) — thống
+kê tổng hợp, KHÔNG list/xuất từng đơn; `find_users` (POST `/api/users/get_users`) —
+tra UUID user cho các bộ lọc theo user; và `list_filter_values` — tra giá trị hợp lệ
+của các bộ lọc còn lại (kho, shop, courier, tag, lý do…). Chế độ stdio có thêm
+`ffm_verify_otp` (§2.1.1).
 
 > ⚠️ **Phạm vi đơn theo quyền tài khoản đăng nhập**: BE tự giới hạn đơn trước khi áp
 > filter. Không có quyền `order.view_all`: nhóm sale / CS chỉ thấy đơn được gán cho
@@ -463,8 +465,8 @@ scalar ⇒ 0 đơn im lặng, MCP tự wrap giúp):
 |---|---|---|
 | `cod` | `"no_cod"` / `"has_cod"` / `"<op>_<amount>"` | `<op>` ∈ `eq` / `gt_or_eq` / `lt_or_eq`. VD `"gt_or_eq_50000"`. |
 | `waybill_number` | `"no_waybill_number"` / `"matched_waybill_number"` | **Enum, KHÔNG phải mã vận đơn** — tra mã cụ thể thì dùng `keyword`. |
-| `courier_reconciliation_status` | `"importing"` / `"courier_reconciling"` / `"courier_reconciled"` / `"courier_not_yet_reconciled"` | Value chứa `"not_yet"` → BE đảo thành must_not. |
-| `customer_reconciliation_status` | `"new"` / `"sent_email"` / `"reconciled"` / `"processing"` / `"completed"` / `"done"` / `"customer_not_yet_reconciled"` | Cùng logic `not_yet`. |
+| `courier_reconciliation_status` | `"courier_not_yet_reconciled"` / `"courier_reconciling"` / `"courier_reconciled"` | Giá trị cột `order_partners.courier_reconciliation_status` (`OrderPartner.get_courier_reconcile_status/1`). Value chứa `"not_yet"` → BE đảo thành must_not. |
+| `customer_reconciliation_status` | `"customer_not_yet_reconciled"` / `"customer_reconciling"` / `"customer_reconciled"` | Cùng logic `not_yet`. Không dùng status của phiên đối soát (`new`, `sent_email`, `reconciled`…) — cột của đơn không có các giá trị đó → 0 đơn. |
 | `is_duplicated_phone` / `is_duplicated_ip` | `true` / `false` | boolean (KHÔNG phải string). |
 | `need_attention_tags` | `string` (1 tên tag) | |
 | `sub_sale_pending_reason` | `number` | Map sang `pending_reason_id`. |
@@ -472,8 +474,13 @@ scalar ⇒ 0 đơn im lặng, MCP tự wrap giúp):
 
 > ❌ **Các khoá KHÔNG tồn tại** trong ES order index — dùng sẽ ra **0 đơn im lặng**,
 > MCP chặn sẵn: `tags` (→ `include_tags`/`exclude_tags`), `category_id`, `shift`,
-> `saved_filter_id`, `business_countries_ids`, `delivery_address_id`,
+> `saved_filter_id` (→ `list_filter_values` với `saved_filter`, dùng nguyên `filters`),
+> `business_countries_ids`, `delivery_address_id` (→ `province_id`/`district_id`/`commune_id`),
 > `tracking_number`/`phone_number` (→ `keyword`).
+
+**AND/OR:** nhiều giá trị trong 1 mảng mặc định là OR. `condition_include_tags` /
+`condition_product_id` / `condition_variation_id` = `"and"` → đơn phải có **tất cả**
+tag / sản phẩm / biến thể trong mảng (giống nút OR/AND trên web).
 
 **Exclude:** thêm flag `is_exclude_<key>: true` để BE đảo `must` → `must_not`:
 
@@ -586,6 +593,37 @@ không có kết quả **hoặc** tài khoản đăng nhập thuộc group `USER
 `user.view` → lỗi `Not enough permission`; khi đó `order_statistics` gom theo user vẫn
 trả số liệu nhưng nhãn là `User <uuid>`. Seller chỉ nhận `id`, tên, `group`
 (email/username là `null`).
+
+### `list_filter_values`
+
+Lấy danh sách giá trị hợp lệ của 1 bộ lọc — cùng nguồn màn "Add indicator" của web
+FFM (`AdvanceFilterV1`) — để AI không phải đoán id / tên (đoán sai → 0 đơn im lặng).
+
+| field | type | note |
+|---|---|---|
+| `country_code` | **string** (bắt buộc) | Phone-code. |
+| `filter_key` | **string** (bắt buộc) | Xem bảng dưới. |
+| `keyword` | string? | Lọc theo tên / mã, không phân biệt hoa thường và dấu. Bắt buộc với `product_id`, `variation_id`, `combo_product`. |
+| `parent_id` | string? | `district_id` cần id tỉnh, `commune_id` cần id huyện. |
+
+| `filter_key` | API BE | `value` |
+|---|---|---|
+| `slot_warehouse_id` | GET `/warehouses` | id kho |
+| `shop_id` | GET `/shops` | id shop |
+| `partner_id` | GET `/partners` (bỏ id 8 như web) | id courier, `no_courier` |
+| `service_types` | GET `/ffm_settings` type `customer_service_type` | tên, `No Service Type` |
+| `include_tags` / `exclude_tags` / `tags` | GET `/orders/tag_group_options` | TÊN tag, `no_tag` |
+| `product_id` | POST `/products/get_products` `{ text }` | id sản phẩm |
+| `variation_id` | POST `/variations/get_variations` `{ text, get_all }` | id biến thể |
+| `combo_product` | GET `/products/combo?keyword` | `pos_combo_id` |
+| `pending_reason_id` | GET `/ffm_settings` type `order_pending_reason` | id, Other = `-1` |
+| `cancel_reason_id` | GET `/ffm_settings` type `order_cancellation_reason` | id, Other = `-2` |
+| `province_id` / `district_id` / `commune_id` | GET `/geo/provinces` / `districts` / `communes` | id địa giới |
+| `sub_status` / `order_sub_status` | danh sách tĩnh `SUB_STATUS_TEXT` | mã sub status |
+| `saved_filter` / `saved_filter_id` | GET `/saved_filters?table_key=order-data` | id + `filters` để dùng nguyên |
+
+Output: `{ filter_key, send_as, total, values: [{ value, label, … }], truncated?, note? }`.
+Tối đa 200 giá trị; nhiều hơn thì thêm `keyword`.
 
 ---
 

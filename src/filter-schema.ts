@@ -66,6 +66,11 @@ const PASSTHROUGH_KEYS: ReadonlyArray<string> = [
   "no_address",
   "no_detail_address",
   "no_commune",
+  // "or" (mặc định) | "and" — BE tách mọi khoá condition_* ra :condition_filter (base_es_query)
+  // rồi đọc ở clause include_tags / product_id / variation_id.
+  "condition_include_tags",
+  "condition_product_id",
+  "condition_variation_id",
 ];
 
 // Khoá lọc theo user: BE lưu UUID (Ecto.UUID / :binary_id), ES mapping `keyword`. Gửi số
@@ -135,7 +140,8 @@ const INVALID_KEY_HINTS: Record<string, string> = {
   is_exclude_tags: "không có `tags` để exclude — dùng thẳng `exclude_tags: [\"tên tag\"]`",
   category_id: "ES order index KHÔNG có field này → luôn 0 đơn",
   shift: "ES order index KHÔNG có field này → luôn 0 đơn",
-  saved_filter_id: "ES order index KHÔNG có field này (bộ lọc đã lưu là khái niệm phía FE) → luôn 0 đơn",
+  saved_filter_id:
+    "bộ lọc đã lưu không phải field của đơn → gọi list_filter_values với filter_key `saved_filter` rồi dùng nguyên `filters` của nó",
   delivery_address_id: "ES order index KHÔNG có field này → luôn 0 đơn",
   business_countries_ids: "ES order index KHÔNG có field này → luôn 0 đơn; lọc quốc gia bằng `country_code` ở cấp tool",
   tracking_number: "dùng `keyword: [\"<mã vận đơn>\"]` (keyword tìm cả tracking_number)",

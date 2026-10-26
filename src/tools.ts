@@ -23,9 +23,11 @@ import {
   DATE_FIELD_KEYS,
   GROUP_FIELDS,
   METRIC_KEYS,
+  SUB_STATUS_TEXT,
   USER_GROUP_FIELDS,
 } from "./constants.js";
 import { validateFilter } from "./filter-schema.js";
+import { FILTER_VALUE_KEYS, listFilterValues } from "./filter-values.js";
 import { esOffsetString, localRangesToUtc, resolveUtcOffset } from "./filter.js";
 import { decorateStatistics, userDisplayName } from "./statistics.js";
 
@@ -47,10 +49,21 @@ const FindUsersInput = z.object({
   keyword: z.string().optional(),
 });
 
+const ListFilterValuesInput = z.object({
+  country_code: z.string().min(1),
+  host: z.string().url().optional(),
+  filter_key: z.string().min(1),
+  keyword: z.string().optional(),
+  parent_id: z.coerce.string().optional(),
+});
+
 const VerifyOtpInput = z.object({
   otp_code: z.coerce.string().optional(),
   host: z.string().url().optional(),
 });
+
+// no_sub_status là bucket của group_by (đơn thiếu sub_status), không phải giá trị lọc.
+const SUB_STATUS_KEYS = Object.keys(SUB_STATUS_TEXT).filter((k) => k !== "no_sub_status");
 
 const FILTER_DESCRIPTION =
   "Filter object — CÙNG schema get_orders (apply_es_filter). " +
@@ -65,11 +78,14 @@ const FILTER_DESCRIPTION =
   "chỉ thấy các status được cấu hình cho nhóm/Department → tổng và group_by status thiếu " +
   "các status còn lại. Lọc/gom theo user KHÁC khi tài khoản không có quyền xem tất cả → " +
   "0 đơn, KHÔNG phải 'user đó không có đơn'. " +
+  "\n\nGIÁ TRỊ CẦN TRA (id kho/shop/courier/lý do/sản phẩm/địa giới, TÊN tag/service " +
+  "type, mã sub_status): gọi tool list_filter_values lấy đúng giá trị, KHÔNG đoán. " +
   "\n\nNHÓM 1 — PHẢI LÀ MẢNG: " +
   "`status` (KHÔNG PHẢI `statuses`) new|need_attention|waiting|need_confirm|" +
   "sale_pending|confirmed|wait_print|printed|packing|pending|shipped|delivered|" +
   "returning|returned|cancel; `sub_status` (lọc được với mọi `status`, kể cả không có " +
-  "`status`; MCP gửi lên BE bằng khoá `order_sub_status`); `shop_id` ([13] KHÔNG phải 13); " +
+  "`status`; MCP gửi lên BE bằng khoá `order_sub_status`) " + SUB_STATUS_KEYS.join("|") + "; " +
+  "`shop_id` ([13] KHÔNG phải 13); " +
   "`partner_id` (hoặc ['no_courier']); `marketplace_id`; `slot_warehouse_id`; " +
   "`pending_reason_id`; `cancel_reason_id`; `total_quantity`; `display_id`; " +
   "`platform_order_id`; `printed_count`; `processing_count`; `call_later_status`; " +
@@ -79,7 +95,7 @@ const FILTER_DESCRIPTION =
   "phải tag ID; thêm 'no_tag' để lọc đơn không tag; KHÔNG có khoá `tags`); " +
   "`service_types` (hoặc ['No Service Type']); `order_source` " +
   "(['non_marketplace']|['-3'] shopee|['-4'] lazada|['-9'] tiktok); `product_id`; " +
-  "`variation_id`; `combo_product`; `province_id`/`district_id`/`commune_id`. " +
+  "`variation_id`; `combo_product` (pos_combo_id); `province_id`/`district_id`/`commune_id`. " +
   "\n\nLỌC THEO USER — PHẢI LÀ MẢNG, mỗi phần tử là UUID user dạng chuỗi " +
   "('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'), KHÔNG phải số / tên / email; lấy UUID bằng " +
   "tool find_users (keyword = tên hoặc email). `assigning_sale_id` (Assigning Sale) / " +
@@ -90,10 +106,9 @@ const FILTER_DESCRIPTION =
   "\n\nNHÓM 2 — SCALAR: `cod` ('has_cod'|'no_cod'|'<eq|gt_or_eq|lt_or_eq>_<số>'); " +
   "`waybill_number` ('no_waybill_number'|'matched_waybill_number' — KHÔNG phải mã " +
   "vận đơn, tìm mã thì dùng `keyword`); `courier_reconciliation_status` " +
-  "('importing'|'courier_reconciling'|'courier_reconciled'|" +
-  "'courier_not_yet_reconciled'); `customer_reconciliation_status` ('new'|" +
-  "'sent_email'|'reconciled'|'processing'|'completed'|'done'|" +
-  "'customer_not_yet_reconciled'); `is_duplicated_phone`/`is_duplicated_ip` " +
+  "('courier_not_yet_reconciled'|'courier_reconciling'|'courier_reconciled'); " +
+  "`customer_reconciliation_status` ('customer_not_yet_reconciled'|" +
+  "'customer_reconciling'|'customer_reconciled'); `is_duplicated_phone`/`is_duplicated_ip` " +
   "(boolean); `need_attention_tags` (1 tên tag); `sub_sale_pending_reason`; " +
   "toggle `no_address`/`no_detail_address`/`no_commune` (đơn thiếu địa chỉ). " +
   "\n\nKHOẢNG THỜI GIAN: '<field>:ranges' = { since, until } ISO " +
@@ -106,6 +121,9 @@ const FILTER_DESCRIPTION =
   "người thao tác trong khoảng (inserted_at→creator_id, updated_at→last_editor_id, " +
   "send_to_partner_at→send_to_partner_user_id, order_status→user trong lịch sử status). " +
   "\n\nEXCLUDE: thêm 'is_exclude_<key>': true (vd is_exclude_partner_id). " +
+  "\n\nAND/OR: mặc định nhiều giá trị là OR (đơn có 1 trong các giá trị). " +
+  "`condition_include_tags` / `condition_product_id` / `condition_variation_id`: 'and' → " +
+  "đơn phải có TẤT CẢ tag / sản phẩm / biến thể trong mảng. " +
   "\n\nCHỈ CHO STATISTICS — pseudo-status, đặt MỘT MÌNH trong `status`: " +
   "['confirmed_same_day'] (tạo & confirm trong cùng ngày theo tz user), " +
   "['canceled_after_confirm'] (đã từng confirmed rồi bị huỷ).";
@@ -231,6 +249,40 @@ export const TOOL_DEFS = [
       },
     },
   },
+  {
+    name: "list_filter_values",
+    description:
+      "Lấy danh sách giá trị hợp lệ của 1 bộ lọc để dùng trong `filter` của order_statistics " +
+      "— cùng danh sách màn 'Add indicator' của web FFM. Gọi TRƯỚC khi lọc theo kho, shop, " +
+      "courier, service type, tag, sản phẩm, biến thể, combo, lý do pending/cancel, địa chỉ, " +
+      "sub status hoặc bộ lọc đã lưu: id/tên đoán sai → BE trả 0 đơn mà không báo lỗi. " +
+      "Kết quả: `send_as` (khoá đặt vào filter) + `values` [{ value, label, … }] — đưa `value` " +
+      "(KHÔNG phải label) vào mảng của khoá đó. Lọc theo user thì dùng find_users.",
+    inputSchema: {
+      type: "object",
+      required: ["country_code", "filter_key"],
+      properties: {
+        country_code: COMMON_PROPERTIES.country_code,
+        host: COMMON_PROPERTIES.host,
+        filter_key: {
+          type: "string",
+          enum: [...FILTER_VALUE_KEYS],
+          description:
+            "Bộ lọc cần tra. product_id / variation_id / combo_product BẮT BUỘC keyword. " +
+            "district_id cần parent_id = id tỉnh; commune_id cần parent_id = id huyện. " +
+            "saved_filter trả `filters` của bộ lọc đã lưu để dùng nguyên làm filter.",
+        },
+        keyword: {
+          type: "string",
+          description: "Lọc theo tên/mã (không phân biệt hoa thường, dấu tiếng Việt). Bỏ trống = tất cả.",
+        },
+        parent_id: {
+          type: "string",
+          description: "Chỉ cho district_id (id tỉnh) và commune_id (id huyện).",
+        },
+      },
+    },
+  },
 ];
 
 // Chỉ stdio: tài khoản bật bảo mật 2 lớp phải nhập OTP khi đăng nhập bằng username/password.
@@ -345,6 +397,15 @@ export async function handleToolCall(
         }));
         return {
           content: [{ type: "text", text: JSON.stringify({ total: users.length, users }, null, 2) }],
+        };
+      }
+
+      case "list_filter_values": {
+        const args = ListFilterValuesInput.parse(rawArgs ?? {});
+        const ctx = { host: binding.host, countryCode: args.country_code, auth: binding.auth };
+        const result = await listFilterValues(ctx, args.filter_key, args.keyword?.trim() || undefined, args.parent_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 

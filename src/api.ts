@@ -67,6 +67,12 @@ async function resolveToken(ctx: CallContext): Promise<string> {
 // Đọc envelope { success, data, message } của BE. BE đôi khi trả 200 + success:false
 // cho auth failures → heuristic message chứa "auth"/"token"/"login"/"unauthorized" ⇒ 401.
 async function readEnvelope(res: Response, label: string): Promise<any> {
+  return (await readBody(res, label))?.data ?? {};
+}
+
+// Như readEnvelope nhưng trả NGUYÊN body: vài API không bọc kết quả trong `data`
+// (vd /products/get_products → `products`, /products/combo → `entries`).
+async function readBody(res: Response, label: string): Promise<any> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new HttpError(res.status, body);
@@ -90,7 +96,7 @@ async function readEnvelope(res: Response, label: string): Promise<any> {
     if (/auth|token|login|unauthor/i.test(msg)) throw new HttpError(401, msg);
     throw new Error(`${label} failed: ${msg || JSON.stringify(json).slice(0, 300)}`);
   }
-  return json?.data ?? {};
+  return json;
 }
 
 // Gọi 1 request đã auth; nếu 401 và auth=password thì force re-login + retry 1 lần.
@@ -218,4 +224,26 @@ export async function fetchUsers(
   return withAuthRetry(ctx, (token) =>
     rawUsers(ctx.host, token, ctx.countryCode, keyword),
   );
+}
+
+// Gọi 1 API đọc dữ liệu của FFM (danh sách kho, courier, lý do, tag, sản phẩm…) cho tool
+// list_filter_values. Trả NGUYÊN body vì mỗi API đặt kết quả ở khoá khác nhau.
+export async function callApi(
+  ctx: CallContext,
+  method: "GET" | "POST",
+  path: string,
+  opts: { query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {},
+): Promise<any> {
+  return withAuthRetry(ctx, async (token) => {
+    const params = new URLSearchParams({ access_token: token, country_code: ctx.countryCode });
+    for (const [k, v] of Object.entries(opts.query ?? {})) {
+      if (v !== undefined) params.set(k, String(v));
+    }
+    const res = await fetch(`${ctx.host.replace(/\/+$/, "")}/api${path}?${params}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(method === "POST" ? { body: JSON.stringify(opts.body ?? {}) } : {}),
+    });
+    return readBody(res, path);
+  });
 }
