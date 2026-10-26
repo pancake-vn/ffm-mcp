@@ -43,6 +43,21 @@ test("filter theo user: nhận UUID và no_user/has_user đứng một mình, sc
   assert.deepEqual(validateFilter({ assigning_sale_id: "has_user" }), { assigning_sale_id: ["has_user"] });
 });
 
+test("cờ exclude của khoá user (is_exclude_<field>:editor_ids / is_exclude_assigning_sale_id) là boolean, không bị nhầm là UUID", () => {
+  assert.deepEqual(
+    validateFilter({
+      "is_exclude_inserted_at:editor_ids": true,
+      "is_exclude_assigning_sale_id": true,
+      "is_exclude_assigning_care_id": false,
+    }),
+    {
+      "is_exclude_inserted_at:editor_ids": true,
+      "is_exclude_assigning_sale_id": true,
+      "is_exclude_assigning_care_id": false,
+    },
+  );
+});
+
 test("filter theo user: UUID chữ hoa được đổi về chữ thường (ES keyword phân biệt hoa thường)", () => {
   assert.deepEqual(validateFilter({ creator_id: [JENNY.toUpperCase()] }), { creator_id: [JENNY] });
 });

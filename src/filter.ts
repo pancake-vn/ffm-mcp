@@ -72,7 +72,7 @@ function convertBoundary(v: unknown, offsetHours: number): unknown {
 }
 
 // Convert mọi key `<time_key>:ranges` (và `ranges`) trong filter sang UTC.
-// Hỗ trợ cả dạng object { since, until } và array [since, until].
+// Chỉ dạng object { since, until } — validateFilter đã chặn dạng khác (BE không đọc được mảng).
 // `offsetHours` = giờ local của since/until (lấy từ resolveUtcOffset).
 export function localRangesToUtc(
   filter: Record<string, unknown> | undefined,
@@ -83,9 +83,7 @@ export function localRangesToUtc(
   const out: Record<string, unknown> = { ...filter };
   for (const [key, val] of Object.entries(out)) {
     if (!(RANGE_KEY.test(key) || key === "ranges")) continue;
-    if (Array.isArray(val)) {
-      out[key] = val.map((x) => convertBoundary(x, off));
-    } else if (val && typeof val === "object") {
+    if (val && typeof val === "object") {
       const r = val as Record<string, unknown>;
       out[key] = {
         ...r,

@@ -84,11 +84,37 @@ const USER_SENTINELS: Record<string, ReadonlyArray<string>> = {
   assigning_care_id: ["no_user", "has_user"],
 };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const isUserKey = (key: string) => USER_ID_KEYS.includes(key) || key.endsWith(":editor_ids");
+const EXCLUDE_FLAG = /^is_exclude_/;
+const isUserKey = (key: string) => !EXCLUDE_FLAG.test(key) && (USER_ID_KEYS.includes(key) || key.endsWith(":editor_ids"));
 
 // Khoá động hợp lệ: "<time_key>:ranges", "<time_key>:editor_ids", cờ "is_exclude_<key>".
 const DYNAMIC_KEY = /(?::ranges|:editor_ids)$/;
-const EXCLUDE_FLAG = /^is_exclude_/;
+
+// Giá trị `<time_key>:ranges`: BE đọc bằng parse_ranges/1 (`term["since"]`, `term["until"]`).
+// Mảng / chuỗi → Access raise → HTTP 500 "Internal Server Error" không kèm chi tiết; object với
+// khoá con khác (gte/lte, from/to) → since/until = nil → BE lọc không giới hạn, ra số sai mà không
+// báo lỗi; chuỗi không phải ngày → ES lỗi, safe_agg_query trả 0 đơn. MCP chặn cả ba trường hợp.
+// Chuỗi chỉ có ngày ("2026-10-19") cũng chặn: localRangesToUtc không quy được sang UTC, BE giữ
+// nguyên → ES hiểu là 00:00 UTC, lệch đúng bằng múi giờ và until mất gần trọn ngày cuối.
+// null ở một đầu = không giới hạn đầu đó (parse_ranges cũng ra nil như khi thiếu khoá).
+const RANGE_KEY = /:ranges$/;
+const RANGE_BOUNDS = ["since", "until"];
+const RANGE_DATETIME_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+const isRangeDate = (v: unknown) =>
+  typeof v === "string" && RANGE_DATETIME_RE.test(v.trim()) && !Number.isNaN(Date.parse(v.trim()));
+
+function rangeProblem(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "phải là object { since, until }";
+  const keys = Object.keys(value);
+  const extra = keys.filter((k) => !RANGE_BOUNDS.includes(k));
+  if (extra.length) return `khoá con ${JSON.stringify(extra)} không được BE đọc, chỉ dùng since / until`;
+  const r = value as Record<string, unknown>;
+  const set = keys.filter((k) => r[k] != null);
+  if (!set.length) return "cần ít nhất since hoặc until";
+  const bad = set.filter((k) => !isRangeDate(r[k]));
+  if (bad.length) return `${bad.join(", ")} phải là chuỗi "YYYY-MM-DDTHH:MM:SS" (có cả giờ)`;
+  return undefined;
+}
 
 // Khoá caller hay gửi → khoá BE thật sự áp dụng. `sub_status` bị base_es_query/2 `Map.drop`
 // khi `status` không phải MỘT chuỗi thuộc need_attention/sale_pending/@sub_status_statuses
@@ -151,6 +177,7 @@ export function validateFilter(
   const out: Record<string, unknown> = {};
   const unknown: string[] = [];
   const badUserIds: string[] = [];
+  const badRanges: string[] = [];
 
   // Khoá user: scalar → mảng, UUID về chữ thường (ES keyword phân biệt hoa thường, UUID trong
   // DB là chữ thường); giá trị không hợp lệ → ghi lại để báo lỗi cùng lúc.
@@ -177,6 +204,8 @@ export function validateFilter(
       continue;
     }
     if (DYNAMIC_KEY.test(key) || EXCLUDE_FLAG.test(key) || PASSTHROUGH_KEYS.includes(key)) {
+      const problem = RANGE_KEY.test(key) && !EXCLUDE_FLAG.test(key) ? rangeProblem(value) : undefined;
+      if (problem) badRanges.push(`\`${key}\` = ${JSON.stringify(value)} (${problem})`);
       out[key] = value;
       continue;
     }
@@ -213,6 +242,15 @@ export function validateFilter(
         `Gọi tool find_users (keyword = tên/email) để lấy UUID. ` +
         `assigning_sale_id / assigning_care_id nhận thêm ["no_user"] / ["has_user"] nhưng phải ` +
         `đứng MỘT MÌNH (trộn với UUID thì BE bỏ qua no_user/has_user).`,
+    );
+  }
+
+  if (badRanges.length) {
+    throw new FilterKeyError(
+      `Giá trị khoảng thời gian không hợp lệ: ${badRanges.join("; ")}. ` +
+        `Dạng đúng: "<time_key>:ranges": { "since": "2026-10-19T00:00:00", "until": "2026-10-25T23:59:59" } ` +
+        `theo giờ local của user (kèm param timezone). Mảng hoặc chuỗi khác rỗng làm BE trả HTTP 500; ` +
+        `khoá con khác since/until bị BE bỏ qua nên ra số của mọi thời điểm.`,
     );
   }
 
