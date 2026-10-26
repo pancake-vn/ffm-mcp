@@ -2,7 +2,8 @@
 // nhãn + tiền tệ từ sea-fulfillment-web/pages/admin/statistic/order-data/index.js
 // (resolveLabel, metricCurrency, realVal). Chạy server-side, không phụ thuộc React/i18n.
 //
-// - group key → nhãn người đọc (status text, sub_status text, marketplace name, shop name).
+// - group key → nhãn người đọc (status text, sub_status text, marketplace name, shop name,
+//   tên user khi gom theo assigning_sale_id / assigning_care_id / creator_id).
 // - metric số → giá trị thật đã scale theo currency (billing vs reconciliation; PH recon
 //   dùng PHP100 → /100). total_quantity không phải tiền → giữ nguyên.
 
@@ -11,15 +12,23 @@ import {
   MARKETPLACE_SOURCE,
   METRIC_BY_KEY,
   NO_SHOP_KEY,
+  NO_USER_KEY,
   ORDER_STATUS_TEXT,
   SUB_STATUS_TEXT,
   currencyByCountry,
 } from "./constants.js";
-import type { ShopLite, StatisticsResponse } from "./api.js";
+import type { ShopLite, StatisticsResponse, UserLite } from "./api.js";
 
 export interface DecorateOptions {
   countryCode: string;
   shopsById?: Record<string, ShopLite>;
+  usersById?: Record<string, UserLite>;
+}
+
+// Tên hiển thị của user: họ tên → username → email (seller chỉ nhận id/first_name/last_name).
+export function userDisplayName(u: UserLite): string {
+  const full = [u.first_name, u.last_name].filter(Boolean).join(" ").trim();
+  return full || u.username || u.email || "";
 }
 
 type KeyPart = { key: unknown; key_as_string?: string };
@@ -29,6 +38,7 @@ function resolveLabel(
   dim: string,
   part: KeyPart | undefined,
   shopsById: Record<string, ShopLite>,
+  usersById: Record<string, UserLite>,
 ): string {
   const key = part?.key;
   const raw = key == null ? "" : String(key);
@@ -43,6 +53,14 @@ function resolveLabel(
     case "shop_id":
       if (raw === NO_SHOP_KEY) return "No shop";
       return shopsById[raw]?.name || `Shop #${raw}`;
+    case "assigning_sale_id":
+    case "assigning_care_id":
+    case "creator_id": {
+      if (raw === NO_USER_KEY) return "No user";
+      const u = usersById[raw];
+      // Không tra được (user đã xoá / khác nước / role không có quyền user.view) → giữ UUID.
+      return (u && userDisplayName(u)) || `User ${raw}`;
+    }
     case "date":
       // key_as_string đã áp time_zone → 10 ký tự đầu là YYYY-MM-DD local.
       return (part?.key_as_string || "").slice(0, 10) || raw;
@@ -57,6 +75,7 @@ export function decorateStatistics(
 ) {
   const { countryCode } = opts;
   const shopsById = opts.shopsById ?? {};
+  const usersById = opts.usersById ?? {};
   const groupBy = Array.isArray(data.group_by) ? data.group_by : [];
   const metrics = Array.isArray(data.metrics) ? data.metrics : [];
 
@@ -77,7 +96,7 @@ export function decorateStatistics(
     Object.fromEntries(metrics.map((m) => [m, realVal(m, values?.[m])]));
 
   const buckets = (data.buckets ?? []).map((b) => ({
-    labels: groupBy.map((dim, i) => resolveLabel(dim, b.keys?.[i], shopsById)),
+    labels: groupBy.map((dim, i) => resolveLabel(dim, b.keys?.[i], shopsById, usersById)),
     keys: (b.keys ?? []).map((k) => k?.key),
     count: b.count ?? 0,
     values: scaleValues(b.values),

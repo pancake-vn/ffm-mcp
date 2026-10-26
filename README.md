@@ -350,8 +350,18 @@ vuông, AI sẽ tự dịch sang tham số tool tương ứng.
 
 ## 7. Tools (tham khảo)
 
-MCP chỉ có **1 tool**: `order_statistics` (POST `/api/orders/statistics`) — thống
-kê tổng hợp, KHÔNG list/xuất từng đơn.
+MCP có **2 tool**: `order_statistics` (POST `/api/orders/statistics`) — thống
+kê tổng hợp, KHÔNG list/xuất từng đơn; và `find_users` (POST `/api/users/get_users`) —
+tra UUID user cho các bộ lọc theo user. Chế độ stdio có thêm `ffm_verify_otp` (§2.1.1).
+
+> ⚠️ **Phạm vi đơn theo quyền tài khoản đăng nhập**: BE tự giới hạn đơn trước khi áp
+> filter. Không có quyền `order.view_all`: nhóm sale / CS chỉ thấy đơn được gán cho
+> chính mình (`assigning_sale_id` / `assigning_care_id`) nếu có quyền
+> `order.process_assigned`, không có quyền này thì 0 đơn; nhóm kho chỉ thấy shop được
+> gán; seller chỉ thấy shop của mình; nhóm còn lại chỉ thấy đơn do mình tạo. Không có
+> quyền `order.view_all_status`: chỉ thấy các status được cấu hình cho nhóm /
+> Department, nên tổng và `group_by status` thiếu các status còn lại. Lọc hoặc gom
+> theo user khác bằng các tài khoản này ra 0 đơn — không có nghĩa user đó không có đơn.
 
 ### `order_statistics`
 
@@ -363,7 +373,7 @@ trả full order doc → nhẹ). `app_id`/`country_code` bị BE ép theo sessio
 | `country_code` | **string** (bắt buộc) | Phone-code (`"63"`, `"66"`…). Xem §2.3. |
 | `host` | string? | override env `SEA_FULFILLMENT_HOST`. |
 | `filter` | object? | Lọc đơn TRƯỚC khi tổng hợp — cùng schema `apply_es_filter` của get_orders. Xem §7.1. |
-| `group_by` | string \| string[]? | Chiều gom nhóm (tối đa 2): `status` \| `sub_status` \| `order_source` \| `shop_id` \| `date`. Rỗng → chỉ trả tổng. `date` PHẢI đứng một mình (histogram). VD `["status","shop_id"]`. |
+| `group_by` | string \| string[]? | Chiều gom nhóm (tối đa 2): `status` \| `sub_status` \| `order_source` \| `shop_id` \| `assigning_sale_id` \| `assigning_care_id` \| `creator_id` \| `date`. Rỗng → chỉ trả tổng. `date` PHẢI đứng một mình (histogram). VD `["status","shop_id"]`, `["assigning_sale_id","status"]`. |
 | `metrics` | string[]? | Field số cần sum. Default `["cod"]`. Số đơn (count) luôn có sẵn. Xem §7.2. |
 | `time_key` | string? | Khi `group_by` chứa `date`: mốc timestamp để chia bucket (default `updated_at`). Nhận: `inserted_at`, `confirmed_at`, `send_to_partner_at`, `picked_up_at`, `delivered_at`, `assign_sale_at`, `first_assign_sale_at`, `assign_care_at`, `expected_receipt_date`, `updated_at`. ⚠️ Khác với `filter.time_key` (xem §7.1) — đây là tham số của tool, không nằm trong `filter`. |
 | `interval` | string? | Khi `group_by` chứa `date`: `day` \| `week` \| `month` (default `day`). |
@@ -410,7 +420,7 @@ Chọn mốc thời gian bằng **tên khoá**, không phải bằng `time_key`.
 | Key | Type | Note |
 |---|---|---|
 | `<field>:ranges` | `{ since, until }` | ISO `"YYYY-MM-DDTHH:MM:SS"` theo **giờ LOCAL** của user (nếu truyền param `timezone`, không thì giờ của `country_code` — vd `63` → PH UTC+8). MCP quy sang **mốc UTC tuyệt đối có hậu tố `Z`** trước khi gọi BE (xem cảnh báo dưới). VD `"inserted_at:ranges": { "since": "2026-04-15T00:00:00", "until": "2026-05-15T23:59:59" }`. KHÔNG dùng unix epoch — BE silently trả rỗng. Tự thêm `Z`/offset thì coi là absolute, MCP không shift nữa. |
-| `<field>:editor_ids` | number[] | Lọc thêm theo user thao tác trong khoảng (`inserted_at`→creator_id, `updated_at`→last_editor_id, `send_to_partner_at`→send_to_partner_user_id, `order_status`→user trong status_histories). |
+| `<field>:editor_ids` | `string[]` UUID user | Lọc thêm theo user thao tác trong khoảng (`inserted_at`→creator_id, `updated_at`→last_editor_id, `send_to_partner_at`→send_to_partner_user_id, `order_status`→user trong status_histories). |
 | `time_key` | string | **KHÔNG phải để chọn field range.** Chỉ có 2 tác dụng: `"send_to_partner_at"` → thêm điều kiện đơn đã gửi partner; `"order_status:<status>"` → lọc đơn từng qua status đó. Muốn lọc khoảng ngày thì dùng `<field>:ranges` ở trên. |
 
 > ⚠️ **Vì sao MCP gắn `Z`** (fix 2026-08-05): BE statistics tự gắn offset vào chuỗi
@@ -436,7 +446,8 @@ scalar ⇒ 0 đơn im lặng, MCP tự wrap giúp):
 | `include_tags` / `exclude_tags` | `string[]` = **TÊN tag**, kèm `"no_tag"` | ⚠️ **KHÔNG có khoá `tags`.** BE query `tags.name` nên phải gửi **tên**, không phải tag ID. `include_tags` gộp AND/OR qua `condition_include_tags` (`"and"`/`"or"`, mặc định `or`). |
 | `product_id` / `variation_id` | `number[]` | AND/OR qua `condition_product_id` / `condition_variation_id`. |
 | `combo_product` | `number[]` | Combo. |
-| `assigning_sale_id` / `assigning_care_id` | `number[]` hoặc `["no_user"]` / `["has_user"]` | Sale/Care phụ trách. |
+| `assigning_sale_id` / `assigning_care_id` | `string[]` UUID user, hoặc `["no_user"]` / `["has_user"]` (đứng một mình) | Assigning Sale / Assigning Care. UUID lấy bằng `find_users`. Trộn `no_user`/`has_user` với UUID thì BE bỏ qua 2 giá trị này → MCP báo lỗi. |
+| `creator_id` / `last_editor_id` / `send_to_partner_user_id` | `string[]` UUID user | Created By / người sửa cuối / người gửi đơn sang courier. UUID lấy bằng `find_users`. |
 | `order_source` | `["non_marketplace"]` / `["-3"]` / `["-4"]` / `["-9"]` | Non-Marketplace / Shopee / Lazada / TikTok. Trộn được, vd `["non_marketplace","-3"]`. |
 | `total_quantity` | `number[]` | Số lượng chính xác, không `{min,max}`. |
 | `slot_warehouse_id` | `number[]` | Warehouse. |
@@ -444,7 +455,7 @@ scalar ⇒ 0 đơn im lặng, MCP tự wrap giúp):
 | `cancel_reason_id` | `number[]` (hoặc `[-2]`) | `-2` = Other reason. |
 | `marketplace_id` | `string[]` | Lọc thẳng theo sàn (tương đương `order_source` nhưng không có nhánh `non_marketplace`). |
 | `province_id` / `district_id` / `commune_id` | `number[]` | Địa chỉ giao (nested `shipping_info`). |
-| `display_id`, `platform_order_id`, `printed_count`, `processing_count`, `creator_id`, `last_editor_id`, `send_to_partner_user_id`, `call_later_status`, `ssc_id` | mảng | Map thẳng sang field cùng tên trong ES. |
+| `display_id`, `platform_order_id`, `printed_count`, `processing_count`, `call_later_status`, `ssc_id` | mảng | Map thẳng sang field cùng tên trong ES. |
 
 **Advance filter — nhóm SCALAR:**
 
@@ -492,6 +503,7 @@ và trả về bình thường. Đây là loại lỗi nguy hiểm nhất vì **
 | `filter.shop_id: 13` (số lẻ) | **0 đơn**, im lặng | `filter.shop_id: [13]` |
 | `filter.tags: [123]` | **0 đơn**, im lặng | `filter.include_tags: ["tên tag"]` |
 | `filter.tracking_number: "SPX…"` | **0 đơn**, im lặng | `filter.keyword: ["SPX…"]` |
+| `filter.assigning_sale_id: [12]` hoặc `["Jenny"]` | **0 đơn**, im lặng | `filter.assigning_sale_id: ["<UUID từ find_users>"]` |
 
 **MCP chặn sẵn giúp bạn** — khoá lạ trả lỗi kèm cách sửa, vd:
 
@@ -501,7 +513,10 @@ giá trị là TÊN tag (BE query `tags.name`), KHÔNG phải tag ID
 ```
 
 Khoá dạng danh sách nhận scalar thì MCP tự wrap thành mảng (`shop_id: 13` →
-`[13]`) nên không còn ra 0 đơn oan. Danh sách khoá đầy đủ theo nhóm xem 2 bảng
+`[13]`) nên không còn ra 0 đơn oan. Khoá lọc theo user (`assigning_sale_id`,
+`assigning_care_id`, `creator_id`, `last_editor_id`, `send_to_partner_user_id`,
+`<field>:editor_ids`) nhận giá trị không phải UUID thì MCP trả lỗi kèm hướng dẫn gọi
+`find_users`. Danh sách khoá đầy đủ theo nhóm xem 2 bảng
 Advance filter ở trên.
 
 > Việc BE tự validate và báo lỗi khi gặp khoá lạ là thay đổi phía `sea-fulfillment`
@@ -546,10 +561,31 @@ Số đơn (`count`) luôn có sẵn, không cần khai. Tiền được scale s
 - **Đơn thiếu giá trị vẫn có bucket riêng**, nên tổng `count` các bucket luôn
   khớp `total_entries`: `order_source` → `non_marketplace` / "Non-marketplace"
   (đơn Facebook, tự tạo — thường là nhóm lớn nhất), `sub_status` →
-  `no_sub_status`, `shop_id` → `-1` / "No shop". Bucket `non_marketplace` khớp
+  `no_sub_status`, `shop_id` → `-1` / "No shop", `assigning_sale_id` /
+  `assigning_care_id` / `creator_id` → `no_user` / "No user". Chiều theo user có
+  `labels` là tên user, `keys` là UUID; số user thường vượt `size` mặc định (100)
+  → truyền `size` lớn hơn (tối đa 1000), nếu không tổng các bucket nhỏ hơn
+  `total_entries`. Bucket `non_marketplace` khớp
   đúng vocabulary của filter `order_source: ["non_marketplace"]`.
 - `values` / `totals` — tiền đã scale theo currency (không chia thêm).
 - Khi `group_by` chứa `date`, output kèm `time_key` + `interval` đã dùng.
+
+### `find_users`
+
+Tra user để lấy UUID cho filter theo user. Gọi `POST /api/users/get_users` với
+`get_all: true` (giống web FFM): user thuộc `country_code` hoặc chưa gán nước.
+
+| field | type | note |
+|---|---|---|
+| `country_code` | **string** (bắt buộc) | Phone-code. |
+| `host` | string? | override env `SEA_FULFILLMENT_HOST`. |
+| `keyword` | string? | Khớp đúng email / số điện thoại / username, hoặc tìm gần đúng theo `first_name` **hoặc** `last_name` (từng cột riêng — họ tên đầy đủ không ra, tìm bằng một từ). Bỏ trống → tất cả. |
+
+Output: `{ total, users: [{ id, name, email, username, group }] }`. Trả `[]` khi
+không có kết quả **hoặc** tài khoản đăng nhập thuộc group `USER`. Role không có quyền
+`user.view` → lỗi `Not enough permission`; khi đó `order_statistics` gom theo user vẫn
+trả số liệu nhưng nhãn là `User <uuid>`. Seller chỉ nhận `id`, tên, `group`
+(email/username là `null`).
 
 ---
 
@@ -589,8 +625,8 @@ Cấu trúc:
 - `src/http.ts` — remote entry: Express + OAuth (`mcpAuthRouter`) + Streamable HTTP.
 - `src/oauth-provider.ts` — `OAuthServerProvider` bọc login FFM + trang Authorize.
 - `src/token.ts` — session JWT tự ký (HMAC) nhúng JWT FFM + host.
-- `src/tools.ts` — tool def `order_statistics` + `buildServer` + `handleToolCall` (dùng chung 2 entry).
-- `src/api.ts` — HTTP client (`callStatistics`/`fetchShops`, auth password|token).
+- `src/tools.ts` — tool def `order_statistics` / `find_users` + `buildServer` + `handleToolCall` (dùng chung 2 entry).
+- `src/api.ts` — HTTP client (`callStatistics`/`fetchShops`/`fetchUsers`, auth password|token).
 - `src/statistics.ts` — decorate response statistics (nhãn người đọc + scale tiền tệ).
 - `src/filter.ts` — quy đổi date-range filter local→UTC tuyệt đối (`Z`) + `esOffsetString` cho histogram.
 - `src/filter-schema.ts` — whitelist khoá filter: chặn khoá sai tên, wrap scalar→mảng (xem §7.1.1).

@@ -158,6 +158,9 @@ export const GROUP_FIELDS: ReadonlyArray<string> = [
   "sub_status",
   "order_source",
   "shop_id",
+  "assigning_sale_id",
+  "assigning_care_id",
+  "creator_id",
   "date",
 ];
 export const GROUP_LABELS: Record<string, string> = {
@@ -165,8 +168,20 @@ export const GROUP_LABELS: Record<string, string> = {
   sub_status: "Sub status",
   order_source: "Order source",
   shop_id: "Shop",
+  assigning_sale_id: "Assigning Sale",
+  assigning_care_id: "Assigning Care",
+  creator_id: "Created By",
   date: "Date",
 };
+
+// Chiều group_by có key là UUID user → resolve sang tên qua /users/get_users.
+export const USER_GROUP_FIELDS: ReadonlyArray<string> = [
+  "assigning_sale_id",
+  "assigning_care_id",
+  "creator_id",
+];
+// Sentinel `missing` của BE cho đơn chưa gán user (cùng giá trị filter ["no_user"]).
+export const NO_USER_KEY = "no_user";
 
 // Mốc thời gian cho group_by "date" / date-range filter (khớp @statistic_date_time_keys BE).
 export const DATE_FIELD_KEYS: ReadonlyArray<string> = [

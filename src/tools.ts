@@ -5,9 +5,10 @@
 // Auth context KHÔNG đọc env trực tiếp ở đây — entry truyền vào qua `resolveAuth`
 // (cho buildServer) hoặc `binding` (cho handleToolCall).
 //
-// Tool DUY NHẤT: order_statistics — gọi POST /api/orders/statistics (Order Data
+// Tool chính: order_statistics — gọi POST /api/orders/statistics (Order Data
 // Statistics manual query, KHÔNG AI), trả aggregation group_by + metrics + totals
 // đã decorate nhãn/tiền tệ. KHÔNG list full order (khác get_orders cũ).
+// Tool phụ: find_users — tra UUID user từ tên/email cho các filter theo user.
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
@@ -16,16 +17,17 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { CallAuth, callStatistics, fetchShops } from "./api.js";
+import { CallAuth, callStatistics, fetchShops, fetchUsers } from "./api.js";
 import { OtpRequiredError, TOKEN_FILE, verifyOtp } from "./auth.js";
 import {
   DATE_FIELD_KEYS,
   GROUP_FIELDS,
   METRIC_KEYS,
+  USER_GROUP_FIELDS,
 } from "./constants.js";
 import { validateFilter } from "./filter-schema.js";
 import { esOffsetString, localRangesToUtc, resolveUtcOffset } from "./filter.js";
-import { decorateStatistics } from "./statistics.js";
+import { decorateStatistics, userDisplayName } from "./statistics.js";
 
 const StatisticsInput = z.object({
   country_code: z.string().min(1),
@@ -39,6 +41,12 @@ const StatisticsInput = z.object({
   size: z.number().int().positive().max(1000).optional(),
 });
 
+const FindUsersInput = z.object({
+  country_code: z.string().min(1),
+  host: z.string().url().optional(),
+  keyword: z.string().optional(),
+});
+
 const VerifyOtpInput = z.object({
   otp_code: z.coerce.string().optional(),
   host: z.string().url().optional(),
@@ -49,6 +57,14 @@ const FILTER_DESCRIPTION =
   "⚠️ SAI TÊN KHOÁ HOẶC SAI KIỂU → BE trả 0 ĐƠN mà KHÔNG báo lỗi (khoá lạ thành " +
   "truy vấn trên field không tồn tại) → ra SỐ SAI, tưởng nhầm 'kỳ đó không có đơn'. " +
   "MCP chặn khoá lạ + tự wrap scalar→mảng, nhưng vẫn nên gửi đúng ngay từ đầu. " +
+  "\n\nPHẠM VI THEO QUYỀN: BE tự giới hạn đơn theo tài khoản đăng nhập TRƯỚC khi áp " +
+  "filter. Không có quyền order.view_all: nhóm sale/CS chỉ thấy đơn được gán cho CHÍNH " +
+  "MÌNH (assigning_sale_id / assigning_care_id) nếu có quyền order.process_assigned, " +
+  "không có quyền này thì 0 đơn; nhóm kho chỉ thấy shop được gán; seller chỉ thấy shop " +
+  "của mình; nhóm còn lại chỉ thấy đơn do mình tạo. Không có quyền order.view_all_status: " +
+  "chỉ thấy các status được cấu hình cho nhóm/Department → tổng và group_by status thiếu " +
+  "các status còn lại. Lọc/gom theo user KHÁC khi tài khoản không có quyền xem tất cả → " +
+  "0 đơn, KHÔNG phải 'user đó không có đơn'. " +
   "\n\nNHÓM 1 — PHẢI LÀ MẢNG: " +
   "`status` (KHÔNG PHẢI `statuses`) new|need_attention|waiting|need_confirm|" +
   "sale_pending|confirmed|wait_print|printed|packing|pending|shipped|delivered|" +
@@ -56,15 +72,21 @@ const FILTER_DESCRIPTION =
   "`status`; MCP gửi lên BE bằng khoá `order_sub_status`); `shop_id` ([13] KHÔNG phải 13); " +
   "`partner_id` (hoặc ['no_courier']); `marketplace_id`; `slot_warehouse_id`; " +
   "`pending_reason_id`; `cancel_reason_id`; `total_quantity`; `display_id`; " +
-  "`platform_order_id`; `printed_count`; `processing_count`; `creator_id`; " +
-  "`last_editor_id`; `send_to_partner_user_id`; `call_later_status`; `ssc_id`; " +
+  "`platform_order_id`; `printed_count`; `processing_count`; `call_later_status`; " +
+  "`ssc_id`; " +
   "`order_ids`; `keyword` (tìm display_id/phone/tracking/note); " +
   "`include_tags`/`exclude_tags` (giá trị là TÊN tag — BE query tags.name — KHÔNG " +
   "phải tag ID; thêm 'no_tag' để lọc đơn không tag; KHÔNG có khoá `tags`); " +
-  "`service_types` (hoặc ['No Service Type']); `assigning_sale_id`/" +
-  "`assigning_care_id` (hoặc ['no_user']/['has_user']); `order_source` " +
+  "`service_types` (hoặc ['No Service Type']); `order_source` " +
   "(['non_marketplace']|['-3'] shopee|['-4'] lazada|['-9'] tiktok); `product_id`; " +
   "`variation_id`; `combo_product`; `province_id`/`district_id`/`commune_id`. " +
+  "\n\nLỌC THEO USER — PHẢI LÀ MẢNG, mỗi phần tử là UUID user dạng chuỗi " +
+  "('xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'), KHÔNG phải số / tên / email; lấy UUID bằng " +
+  "tool find_users (keyword = tên hoặc email). `assigning_sale_id` (Assigning Sale) / " +
+  "`assigning_care_id` (Assigning Care): string[] UUID, hoặc ['no_user'] (chưa gán) / " +
+  "['has_user'] (đã gán) — 2 giá trị này phải đứng MỘT MÌNH, không trộn với UUID; " +
+  "`creator_id` (Created By); `last_editor_id` (người sửa cuối); " +
+  "`send_to_partner_user_id` (người gửi đơn sang courier). " +
   "\n\nNHÓM 2 — SCALAR: `cod` ('has_cod'|'no_cod'|'<eq|gt_or_eq|lt_or_eq>_<số>'); " +
   "`waybill_number` ('no_waybill_number'|'matched_waybill_number' — KHÔNG phải mã " +
   "vận đơn, tìm mã thì dùng `keyword`); `courier_reconciliation_status` " +
@@ -80,8 +102,9 @@ const FILTER_DESCRIPTION =
   "dùng unix epoch (BE trả rỗng). <field> ∈ inserted_at|updated_at|confirmed_at|" +
   "send_to_partner_at|picked_up_at|delivered_at|assign_sale_at|" +
   "first_assign_sale_at|assign_care_at|expected_receipt_date|call_later_at|" +
-  "sla_due_at|order_status. Kèm '<field>:editor_ids' (number[]) để lọc theo người " +
-  "thao tác trong khoảng. " +
+  "sla_due_at|order_status. Kèm '<field>:editor_ids' (string[] UUID user) để lọc theo " +
+  "người thao tác trong khoảng (inserted_at→creator_id, updated_at→last_editor_id, " +
+  "send_to_partner_at→send_to_partner_user_id, order_status→user trong lịch sử status). " +
   "\n\nEXCLUDE: thêm 'is_exclude_<key>': true (vd is_exclude_partner_id). " +
   "\n\nCHỈ CHO STATISTICS — pseudo-status, đặt MỘT MÌNH trong `status`: " +
   "['confirmed_same_day'] (tạo & confirm trong cùng ngày theo tz user), " +
@@ -113,8 +136,13 @@ const COMMON_PROPERTIES = {
       "(histogram) — kèm chiều khác thì BE chỉ giữ date. VD ['status'] hoặc " +
       "['status','shop_id'] (cross-tab). Đơn THIẾU giá trị vẫn có bucket riêng: " +
       "order_source → 'non_marketplace' (đơn Facebook/tự tạo, thường là nhóm LỚN " +
-      "NHẤT), sub_status → 'no_sub_status', shop_id → -1 ('No shop') ⇒ tổng count " +
-      "các bucket khớp total_entries; lệch nghĩa là có lỗi, đừng tự suy diễn.",
+      "NHẤT), sub_status → 'no_sub_status', shop_id → -1 ('No shop'), " +
+      "assigning_sale_id/assigning_care_id/creator_id → 'no_user' ('No user'); chiều " +
+      "theo user trả nhãn là tên user, keys là UUID (bucket 'no_user' của creator_id KHÔNG " +
+      "dùng lại làm filter được) ⇒ tổng count " +
+      "các bucket khớp total_entries khi số nhóm ≤ `size` (default 100); gom theo user " +
+      "thường có nhiều nhóm hơn → truyền `size` lớn hơn (tối đa 1000). Lệch khi số nhóm " +
+      "< size nghĩa là có lỗi, đừng tự suy diễn.",
   },
   metrics: {
     type: "array",
@@ -169,11 +197,38 @@ export const TOOL_DEFS = [
       "(tối đa 2 chiều, 'date' đứng riêng) + metrics (field số cần sum). Kết quả " +
       "đã decorate: nhãn người đọc (status text, shop name, marketplace) + tiền tệ " +
       "scale sẵn. BẮT BUỘC country_code (63=PH, 66=TH, 60=MY, 62=ID, 65=SG). Khi " +
-      "lọc/gom theo thời gian BẮT BUỘC kèm `timezone` theo giờ local của user.",
+      "lọc/gom theo thời gian BẮT BUỘC kèm `timezone` theo giờ local của user. " +
+      "Lọc theo user (Assigning Sale / Assigning Care / Created By…) cần UUID → gọi " +
+      "find_users trước.",
     inputSchema: {
       type: "object",
       required: ["country_code"],
       properties: { ...COMMON_PROPERTIES },
+    },
+  },
+  {
+    name: "find_users",
+    description:
+      "Tra user FFM (POST /api/users/get_users) để lấy UUID dùng cho filter của " +
+      "order_statistics: assigning_sale_id (Assigning Sale), assigning_care_id (Assigning " +
+      "Care), creator_id (Created By), last_editor_id, send_to_partner_user_id, " +
+      "'<field>:editor_ids'. `keyword` khớp ĐÚNG email / số điện thoại / username, hoặc " +
+      "tìm GẦN ĐÚNG theo first_name HOẶC last_name (từng cột riêng — họ tên đầy đủ " +
+      "'Jenny Nguyen' sẽ không ra, hãy tìm bằng MỘT từ); bỏ trống → mọi user của " +
+      "country_code. Nhiều user trùng tên → hỏi lại user muốn người nào (dựa vào " +
+      "email/group), KHÔNG tự chọn. Trả [] khi không có kết quả hoặc tài khoản thuộc group " +
+      "USER; báo lỗi 'Not enough permission' khi role của tài khoản không có quyền user.view.",
+    inputSchema: {
+      type: "object",
+      required: ["country_code"],
+      properties: {
+        country_code: COMMON_PROPERTIES.country_code,
+        host: COMMON_PROPERTIES.host,
+        keyword: {
+          type: "string",
+          description: "Tên, email, số điện thoại hoặc username. Bỏ trống = tất cả.",
+        },
+      },
     },
   },
 ];
@@ -262,10 +317,34 @@ export async function handleToolCall(
         const shopsById = dims.includes("shop_id")
           ? Object.fromEntries((await fetchShops(ctx)).map((s) => [String(s.id), s]))
           : {};
+        // Tương tự: resolve UUID → tên user khi BE group theo user. Role không có quyền
+        // user.view vẫn gọi được statistics nhưng /users/get_users trả lỗi → giữ số liệu,
+        // nhãn rơi về UUID thay vì làm hỏng cả lời gọi.
+        const usersById = dims.some((d) => USER_GROUP_FIELDS.includes(d))
+          ? Object.fromEntries(
+              (await fetchUsers(ctx).catch(() => [])).map((u) => [String(u.id), u]),
+            )
+          : {};
 
-        const decorated = decorateStatistics(data, { countryCode: country, shopsById });
+        const decorated = decorateStatistics(data, { countryCode: country, shopsById, usersById });
         return {
           content: [{ type: "text", text: JSON.stringify(decorated, null, 2) }],
+        };
+      }
+
+      case "find_users": {
+        const args = FindUsersInput.parse(rawArgs ?? {});
+        const ctx = { host: binding.host, countryCode: args.country_code, auth: binding.auth };
+        const keyword = args.keyword?.trim() || undefined;
+        const users = (await fetchUsers(ctx, keyword)).map((u) => ({
+          id: u.id,
+          name: userDisplayName(u),
+          email: u.email ?? null,
+          username: u.username ?? null,
+          group: u.group ?? null,
+        }));
+        return {
+          content: [{ type: "text", text: JSON.stringify({ total: users.length, users }, null, 2) }],
         };
       }
 

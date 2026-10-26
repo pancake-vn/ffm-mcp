@@ -5,7 +5,8 @@
 //
 // Endpoint chính: POST /api/orders/statistics (Order Data Statistics — trả aggregation
 // group_by + metrics + totals, KHÔNG trả full order doc). Kèm GET /api/shops để resolve
-// shop_id → tên shop khi group_by theo shop.
+// shop_id → tên shop khi group_by theo shop, và POST /api/users/get_users để tra user
+// (tên/email → UUID cho filter, UUID → tên khi group_by theo user).
 
 import { invalidateToken, resolveAccessToken } from "./auth.js";
 
@@ -45,6 +46,16 @@ export interface ShopLite {
   id: number | string;
   name?: string;
   pos_shop_id?: string | number;
+  [k: string]: unknown;
+}
+
+export interface UserLite {
+  id: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  username?: string | null;
+  email?: string | null;
+  group?: string | null;
   [k: string]: unknown;
 }
 
@@ -168,5 +179,43 @@ async function rawShops(
 export async function fetchShops(ctx: CallContext): Promise<ShopLite[]> {
   return withAuthRetry(ctx, (token) =>
     rawShops(ctx.host, token, ctx.countryCode),
+  );
+}
+
+async function rawUsers(
+  host: string,
+  accessToken: string,
+  countryCode: string,
+  keyword: string | undefined,
+): Promise<UserLite[]> {
+  const base = host.replace(/\/+$/, "");
+  const url =
+    `${base}/api/users/get_users` +
+    `?access_token=${encodeURIComponent(accessToken)}` +
+    `&country_code=${encodeURIComponent(countryCode)}`;
+  // get_all=true: giống web FFM (utils/fetch-data.js) — lấy user thuộc country_code hoặc chưa
+  // gán nước. Không gửi page → BE trả toàn bộ, không phân trang. `keyword` khớp đúng
+  // email/phone/username hoặc tìm gần đúng first_name/last_name (UserController.index).
+  const body = { get_all: true, filter: keyword ? { keyword: [keyword] } : {} };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await readEnvelope(res, "users");
+  // Có page → { data: [...] }; không page → { data: [...] } hoặc [] khi BE từ chối (group USER).
+  const list = Array.isArray(data) ? data : data?.data;
+  return Array.isArray(list) ? (list as UserLite[]) : [];
+}
+
+// Tra user theo keyword (bỏ trống = toàn bộ user của country) — UUID dùng cho filter
+// assigning_sale_id / assigning_care_id / creator_id… và để resolve nhãn khi group_by user.
+export async function fetchUsers(
+  ctx: CallContext,
+  keyword?: string,
+): Promise<UserLite[]> {
+  return withAuthRetry(ctx, (token) =>
+    rawUsers(ctx.host, token, ctx.countryCode, keyword),
   );
 }

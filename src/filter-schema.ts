@@ -68,6 +68,24 @@ const PASSTHROUGH_KEYS: ReadonlyArray<string> = [
   "no_commune",
 ];
 
+// Khoá lọc theo user: BE lưu UUID (Ecto.UUID / :binary_id), ES mapping `keyword`. Gửi số
+// hoặc tên/email → `terms` không khớp doc nào → 0 đơn im lặng. Chỉ nhận chuỗi UUID; riêng
+// assigning_* nhận thêm sentinel no_user / has_user (clause riêng ở apply_es_filter) — CHỈ khi
+// đứng một mình: trộn với UUID thì BE bỏ sentinel đi, ["no_user","has_user"] ra 0 đơn.
+const USER_ID_KEYS: ReadonlyArray<string> = [
+  "creator_id",
+  "last_editor_id",
+  "send_to_partner_user_id",
+  "assigning_sale_id",
+  "assigning_care_id",
+];
+const USER_SENTINELS: Record<string, ReadonlyArray<string>> = {
+  assigning_sale_id: ["no_user", "has_user"],
+  assigning_care_id: ["no_user", "has_user"],
+};
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUserKey = (key: string) => USER_ID_KEYS.includes(key) || key.endsWith(":editor_ids");
+
 // Khoá động hợp lệ: "<time_key>:ranges", "<time_key>:editor_ids", cờ "is_exclude_<key>".
 const DYNAMIC_KEY = /(?::ranges|:editor_ids)$/;
 const EXCLUDE_FLAG = /^is_exclude_/;
@@ -132,6 +150,19 @@ export function validateFilter(
 
   const out: Record<string, unknown> = {};
   const unknown: string[] = [];
+  const badUserIds: string[] = [];
+
+  // Khoá user: scalar → mảng, UUID về chữ thường (ES keyword phân biệt hoa thường, UUID trong
+  // DB là chữ thường); giá trị không hợp lệ → ghi lại để báo lỗi cùng lúc.
+  const normalizeUserIds = (key: string, value: unknown): unknown => {
+    if (value == null) return value;
+    const list = Array.isArray(value) ? value : [value];
+    const sentinels = USER_SENTINELS[key] ?? [];
+    if (list.length === 1 && sentinels.includes(list[0] as string)) return list;
+    const bad = list.filter((v) => !(typeof v === "string" && UUID_RE.test(v)));
+    if (bad.length) badUserIds.push(`\`${key}\`: ${JSON.stringify(bad)}`);
+    return list.map((v) => (typeof v === "string" ? v.toLowerCase() : v));
+  };
 
   for (const [rawKey, value] of Object.entries(filter)) {
     const flagOf = rawKey.replace(EXCLUDE_FLAG, "");
@@ -140,6 +171,10 @@ export function validateFilter(
       (EXCLUDE_FLAG.test(rawKey) && KEY_ALIASES[flagOf] ? `is_exclude_${KEY_ALIASES[flagOf]}` : rawKey);
     if (key !== rawKey && key in filter) {
       throw new FilterKeyError(`Không gửi cùng lúc \`${rawKey}\` và \`${key}\` — hai khoá lọc cùng field, chỉ giữ một.`);
+    }
+    if (isUserKey(key)) {
+      out[key] = normalizeUserIds(key, value);
+      continue;
     }
     if (DYNAMIC_KEY.test(key) || EXCLUDE_FLAG.test(key) || PASSTHROUGH_KEYS.includes(key)) {
       out[key] = value;
@@ -167,6 +202,17 @@ export function validateFilter(
         `BE BỎ QUA khoá lạ và trả 0 đơn mà KHÔNG báo lỗi, nên MCP chặn tại đây để tránh ra số sai. ` +
         `Khoá hợp lệ: ${KNOWN_KEYS.join(", ")}, kèm dạng động "<time_key>:ranges", ` +
         `"<time_key>:editor_ids", "is_exclude_<key>".`,
+    );
+  }
+
+  if (badUserIds.length) {
+    throw new FilterKeyError(
+      `Giá trị lọc theo user không hợp lệ: ${badUserIds.join("; ")}. ` +
+        `Các khoá này nhận UUID của user (chuỗi dạng "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"), ` +
+        `KHÔNG nhận số, tên hay email — BE so khớp đúng UUID nên giá trị khác ra 0 đơn mà không báo lỗi. ` +
+        `Gọi tool find_users (keyword = tên/email) để lấy UUID. ` +
+        `assigning_sale_id / assigning_care_id nhận thêm ["no_user"] / ["has_user"] nhưng phải ` +
+        `đứng MỘT MÌNH (trộn với UUID thì BE bỏ qua no_user/has_user).`,
     );
   }
 
