@@ -59,6 +59,17 @@ export interface UserLite {
   [k: string]: unknown;
 }
 
+// Header gửi kèm mọi request gọi BE. Token gửi bằng `Authorization: Bearer` VÀ vẫn gửi
+// `?access_token=` trên URL: BE prod hiện chỉ đọc token ở URL (plug api_auth của
+// sea-fulfillment), BE phase 2 sẽ đọc header. Khi phase 2 lên prod thì bỏ `access_token`
+// khỏi URL ở rawStatistics / rawShops / rawUsers / callApi, chỉ giữ header này.
+function authHeaders(accessToken: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${accessToken}`,
+  };
+}
+
 async function resolveToken(ctx: CallContext): Promise<string> {
   if (ctx.auth.kind === "token") return ctx.auth.token;
   return resolveAccessToken(ctx.host, ctx.auth.username, ctx.auth.password);
@@ -145,7 +156,7 @@ async function rawStatistics(
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload ?? {}),
   });
   return (await readEnvelope(res, "statistics")) as StatisticsResponse;
@@ -175,7 +186,7 @@ async function rawShops(
 
   const res = await fetch(url, {
     method: "GET",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(accessToken),
   });
   const data = await readEnvelope(res, "shops");
   return Array.isArray(data) ? (data as ShopLite[]) : [];
@@ -206,7 +217,7 @@ async function rawUsers(
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(body),
   });
   const data = await readEnvelope(res, "users");
@@ -241,7 +252,7 @@ export async function callApi(
     }
     const res = await fetch(`${ctx.host.replace(/\/+$/, "")}/api${path}?${params}`, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(token),
       ...(method === "POST" ? { body: JSON.stringify(opts.body ?? {}) } : {}),
     });
     return readBody(res, path);
