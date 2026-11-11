@@ -63,10 +63,8 @@ khi sắp hết hạn hoặc khi BE trả 401.
    `host::username`.
 3. Các call sau dùng cache, refresh trước hạn 5 phút để tránh race.
 4. Nếu BE trả 401 → invalidate cache + force re-login + retry 1 lần.
-5. Mọi request gọi BE gửi token bằng header `Authorization: Bearer <jwt>` và
-   vẫn gửi kèm `?access_token=<jwt>` trên URL, vì BE prod hiện chỉ đọc token ở
-   URL. Khi BE sea-fulfillment phase 2 (đọc header Bearer) lên prod thì bỏ
-   `access_token` khỏi URL trong `src/api.ts` (hàm `authHeaders` ghi rõ các chỗ).
+5. Mọi request gọi BE gửi token bằng header `Authorization: Bearer <jwt>`,
+   không đặt `access_token` trên URL (`authHeaders` trong `src/api.ts`).
 
 Token được lưu vào `~/.ffm-mcp/tokens.json` (chỉ chủ máy đọc được, quyền 600):
 mở lại client vẫn dùng token cũ tới khi hết hạn, không đăng nhập lại.

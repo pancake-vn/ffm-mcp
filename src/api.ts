@@ -59,10 +59,9 @@ export interface UserLite {
   [k: string]: unknown;
 }
 
-// Header gửi kèm mọi request gọi BE. Token gửi bằng `Authorization: Bearer` VÀ vẫn gửi
-// `?access_token=` trên URL: BE prod hiện chỉ đọc token ở URL (plug api_auth của
-// sea-fulfillment), BE phase 2 sẽ đọc header. Khi phase 2 lên prod thì bỏ `access_token`
-// khỏi URL ở rawStatistics / rawShops / rawUsers / callApi, chỉ giữ header này.
+// Header gửi kèm mọi request gọi BE. Token chỉ gửi bằng `Authorization: Bearer`, không đặt trên
+// URL: plug api_auth của sea-fulfillment đọc header này trước `?access_token=`, và BE sẽ bỏ hẳn
+// cách đọc token trên URL khi mọi dịch vụ đã chuyển sang header / cookie.
 function authHeaders(accessToken: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
@@ -151,8 +150,7 @@ async function rawStatistics(
   const base = host.replace(/\/+$/, "");
   const url =
     `${base}/api/orders/statistics` +
-    `?access_token=${encodeURIComponent(accessToken)}` +
-    `&country_code=${encodeURIComponent(countryCode)}`;
+    `?country_code=${encodeURIComponent(countryCode)}`;
 
   const res = await fetch(url, {
     method: "POST",
@@ -180,8 +178,7 @@ async function rawShops(
   // is_show_all=true bắt buộc, nếu không /shops trả list partial (nhiều id miss).
   const url =
     `${base}/api/shops` +
-    `?access_token=${encodeURIComponent(accessToken)}` +
-    `&country_code=${encodeURIComponent(countryCode)}` +
+    `?country_code=${encodeURIComponent(countryCode)}` +
     `&is_available=false&is_show_all=true`;
 
   const res = await fetch(url, {
@@ -208,8 +205,7 @@ async function rawUsers(
   const base = host.replace(/\/+$/, "");
   const url =
     `${base}/api/users/get_users` +
-    `?access_token=${encodeURIComponent(accessToken)}` +
-    `&country_code=${encodeURIComponent(countryCode)}`;
+    `?country_code=${encodeURIComponent(countryCode)}`;
   // get_all=true: giống web FFM (utils/fetch-data.js) — lấy user thuộc country_code hoặc chưa
   // gán nước. Không gửi page → BE trả toàn bộ, không phân trang. `keyword` khớp đúng
   // email/phone/username hoặc tìm gần đúng first_name/last_name (UserController.index).
@@ -246,7 +242,7 @@ export async function callApi(
   opts: { query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {},
 ): Promise<any> {
   return withAuthRetry(ctx, async (token) => {
-    const params = new URLSearchParams({ access_token: token, country_code: ctx.countryCode });
+    const params = new URLSearchParams({ country_code: ctx.countryCode });
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== undefined) params.set(k, String(v));
     }
